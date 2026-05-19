@@ -48,7 +48,7 @@ impl Default for RecorderSettings {
     fn default() -> Self {
         Self {
             source: CaptureSourceKind::Display,
-            fps: FrameRate::Fps60,
+            fps: FrameRate::Fps30,
             codec: Codec::Hevc,
             quality: Quality::Balanced,
             output_dir: dirs_output_dir(),

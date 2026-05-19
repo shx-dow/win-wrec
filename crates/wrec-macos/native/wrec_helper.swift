@@ -83,7 +83,12 @@ func run() async {
         streamConfig.queueDepth = 3
         streamConfig.showsCursor = includeCursor
         streamConfig.capturesAudio = false
-        streamConfig.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        FileHandle.standardError.write(
+            Data(
+                "wrec-helper: target=\(targetKind) id=\(targetId) size=\(streamConfig.width)x\(streamConfig.height) fps=\(fps) cursor=\(includeCursor)\n"
+                    .utf8
+            )
+        )
 
         let stream = SCStream(filter: filter, configuration: streamConfig, delegate: nil)
 
