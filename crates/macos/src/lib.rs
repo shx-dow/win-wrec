@@ -1,6 +1,6 @@
 use wrec_core::{
     CaptureSourceKind, CaptureTarget, RecorderEngine, RecorderError, RecorderMetrics,
-    RecorderSettings, RecordingSession, Result,
+    RecorderSettings, RecordingSession, Result, ScreenRecordingPermissionStatus,
 };
 
 static NEXT_SESSION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -52,6 +52,14 @@ impl MacosRecorder {
             message: message.into(),
         });
     }
+
+    pub fn screen_recording_permission_status(&self) -> Result<ScreenRecordingPermissionStatus> {
+        platform::screen_recording_permission_status()
+    }
+
+    pub fn request_screen_recording_permission(&self) -> Result<ScreenRecordingPermissionStatus> {
+        platform::request_screen_recording_permission()
+    }
 }
 
 impl RecorderEngine for MacosRecorder {
@@ -100,10 +108,11 @@ mod platform {
     use std::io::{BufRead, BufReader};
     use std::sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex, OnceLock,
+        mpsc, Arc, Mutex, OnceLock,
     };
     use std::time::{Duration, Instant};
 
+    const START_TIMEOUT: Duration = Duration::from_secs(5);
     const STOP_TIMEOUT: Duration = Duration::from_secs(20);
     const STOP_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -112,7 +121,20 @@ mod platform {
         metrics_running: Arc<AtomicBool>,
     }
 
+    enum StartupSignal {
+        Started,
+        Failed(String),
+    }
+
     static CHILD: OnceLock<Mutex<Option<RecordingProcess>>> = OnceLock::new();
+
+    pub fn screen_recording_permission_status() -> Result<ScreenRecordingPermissionStatus> {
+        run_permission_command("--permission-status")
+    }
+
+    pub fn request_screen_recording_permission() -> Result<ScreenRecordingPermissionStatus> {
+        run_permission_command("--request-permission")
+    }
 
     pub fn list_targets() -> Result<Vec<CaptureTarget>> {
         use std::process::Command;
@@ -204,6 +226,7 @@ mod platform {
         let metrics_running = Arc::new(AtomicBool::new(true));
         let metrics_events = events.clone();
         let stderr = child.stderr.take();
+        let (startup_tx, startup_rx) = mpsc::channel();
 
         *active_child = Some(RecordingProcess {
             child,
@@ -211,15 +234,47 @@ mod platform {
         });
         drop(active_child);
 
+        let Some(stderr) = stderr else {
+            let _ = kill_active_child();
+            return Err(RecorderError::Backend(
+                "helper stderr was not available for startup handshake".into(),
+            ));
+        };
+
+        std::thread::spawn(move || {
+            forward_helper_stderr(session_id, stderr, events, Some(startup_tx));
+        });
+
+        match startup_rx.recv_timeout(START_TIMEOUT) {
+            Ok(StartupSignal::Started) => {}
+            Ok(StartupSignal::Failed(message)) => {
+                let _ = std::fs::remove_file(&output_path);
+                return Err(RecorderError::Backend(format!(
+                    "recording helper failed to start: {message}"
+                )));
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let status = kill_active_child();
+                let _ = std::fs::remove_file(&output_path);
+                return Err(RecorderError::Backend(format!(
+                    "recording helper did not report start within {}s{status}",
+                    START_TIMEOUT.as_secs()
+                )));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = std::fs::remove_file(&output_path);
+                return Err(RecorderError::Backend(
+                    "recording helper startup channel closed before recording started".into(),
+                ));
+            }
+        }
+
         spawn_metrics_thread(
             session_id,
             output_path.clone(),
-            metrics_running.clone(),
+            metrics_running,
             metrics_events,
         );
-        if let Some(stderr) = stderr {
-            std::thread::spawn(move || forward_helper_stderr(session_id, stderr, events));
-        }
 
         tracing::info!(?target, ?settings, ?output_path, "started recording helper");
         Ok(RecordingSession {
@@ -276,15 +331,31 @@ mod platform {
         session_id: u64,
         stderr: std::process::ChildStderr,
         events: Option<std::sync::mpsc::Sender<RecorderEvent>>,
+        startup: Option<mpsc::Sender<StartupSignal>>,
     ) {
+        let mut startup = startup;
+        let mut did_start = false;
+        let mut first_startup_failure = None;
+
         for line in BufReader::new(stderr)
             .lines()
             .map_while(std::result::Result::ok)
         {
             eprintln!("{line}");
+            let is_recording_started = helper_line_is_recording_started(&line);
+            let is_failure = helper_line_is_failure(&line);
+
+            if is_failure && first_startup_failure.is_none() {
+                first_startup_failure = Some(line.clone());
+            }
+            if is_recording_started {
+                did_start = true;
+                signal_startup(&mut startup, StartupSignal::Started);
+            }
+
             emit(
                 &events,
-                if helper_line_is_failure(&line) {
+                if did_start && is_failure {
                     RecorderEvent::Failed {
                         session_id: Some(session_id),
                         message: line,
@@ -300,6 +371,10 @@ mod platform {
 
         let child_slot = CHILD.get_or_init(|| Mutex::new(None));
         let Ok(mut child) = child_slot.lock() else {
+            signal_startup(
+                &mut startup,
+                StartupSignal::Failed("failed to inspect helper exit status".into()),
+            );
             return;
         };
         let Some(status) = child
@@ -314,9 +389,26 @@ mod platform {
             })
             .flatten()
         else {
+            if !did_start {
+                signal_startup(
+                    &mut startup,
+                    StartupSignal::Failed("helper stderr closed before recording started".into()),
+                );
+            }
             return;
         };
         *child = None;
+
+        if !did_start {
+            signal_startup(
+                &mut startup,
+                StartupSignal::Failed(first_startup_failure.unwrap_or_else(|| {
+                    format!("helper exited before recording started: {status}")
+                })),
+            );
+            return;
+        }
+
         emit(
             &events,
             RecorderEvent::Exited {
@@ -325,6 +417,26 @@ mod platform {
                 status: status.to_string(),
             },
         );
+    }
+
+    fn signal_startup(startup: &mut Option<mpsc::Sender<StartupSignal>>, signal: StartupSignal) {
+        if let Some(startup) = startup.take() {
+            let _ = startup.send(signal);
+        }
+    }
+
+    fn kill_active_child() -> String {
+        let child_slot = CHILD.get_or_init(|| Mutex::new(None));
+        let Some(mut process) = child_slot.lock().ok().and_then(|mut child| child.take()) else {
+            return String::new();
+        };
+
+        process.metrics_running.store(false, Ordering::Relaxed);
+        let _ = process.child.kill();
+        match process.child.wait() {
+            Ok(status) => format!("; killed helper with {status}"),
+            Err(err) => format!("; failed to wait for killed helper: {err}"),
+        }
     }
 
     fn emit(events: &Option<std::sync::mpsc::Sender<RecorderEvent>>, event: RecorderEvent) {
@@ -376,10 +488,44 @@ mod platform {
             || line.contains("timed out")
             || line.contains("not found")
             || line.contains("no display")
+            || line.contains("Assertion failed")
+            || line.contains("CGS_REQUIRE_INIT")
+    }
+
+    fn helper_line_is_recording_started(line: &str) -> bool {
+        line.contains("wrec-helper: recording started")
     }
 
     fn is_permission_error(message: &str) -> bool {
         message.contains("permission denied") || message.contains("Screen Recording access")
+    }
+
+    fn run_permission_command(arg: &str) -> Result<ScreenRecordingPermissionStatus> {
+        use std::process::Command;
+
+        let output = Command::new(helper_path())
+            .arg(arg)
+            .output()
+            .map_err(|err| {
+                RecorderError::Backend(format!(
+                    "failed to check screen recording permission: {err}"
+                ))
+            })?;
+
+        if !output.status.success() {
+            return Err(RecorderError::Backend(format!(
+                "screen recording permission check failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+
+        match String::from_utf8_lossy(&output.stdout).trim() {
+            "granted" => Ok(ScreenRecordingPermissionStatus::Granted),
+            "missing" => Ok(ScreenRecordingPermissionStatus::Missing),
+            status => Err(RecorderError::Backend(format!(
+                "unknown screen recording permission status: {status}"
+            ))),
+        }
     }
 
     fn helper_path() -> std::path::PathBuf {
@@ -399,6 +545,14 @@ mod platform {
 #[cfg(not(target_os = "macos"))]
 mod platform {
     use super::*;
+
+    pub fn screen_recording_permission_status() -> Result<ScreenRecordingPermissionStatus> {
+        Err(RecorderError::Backend("wrec only supports macOS".into()))
+    }
+
+    pub fn request_screen_recording_permission() -> Result<ScreenRecordingPermissionStatus> {
+        Err(RecorderError::Backend("wrec only supports macOS".into()))
+    }
 
     pub fn list_targets() -> Result<Vec<CaptureTarget>> {
         Err(RecorderError::Backend("wrec only supports macOS".into()))

@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import ScreenCaptureKit
 import AVFoundation
 import CoreGraphics
@@ -146,8 +147,19 @@ enum HelperError: Error {
     case writerInputRejected
 }
 
+@MainActor
 func run() async {
     let args = CommandLine.arguments
+
+    if args.count >= 2 && args[1] == "--permission-status" {
+        print(CGPreflightScreenCaptureAccess() ? "granted" : "missing")
+        return
+    }
+
+    if args.count >= 2 && args[1] == "--request-permission" {
+        print(CGRequestScreenCaptureAccess() ? "granted" : "missing")
+        return
+    }
 
     if args.count >= 2 && args[1] == "--list" {
         guard ensureScreenCapturePermission() else {
@@ -240,7 +252,7 @@ func run() async {
         _ = recorder.waitUntilStarted(timeout: .seconds(3))
 
         // Parent process writes a line to stdin to stop. EOF also stops.
-        _ = readLine()
+        await waitForStopSignal()
 
         try await stream.stopCapture()
         guard recorder.finish(timeout: .seconds(15)) else {
@@ -275,6 +287,18 @@ func ensureScreenCapturePermission() -> Bool {
     return CGRequestScreenCaptureAccess()
 }
 
+@MainActor
+func initializeGraphicsClient() {
+    _ = NSApplication.shared
+    NSApplication.shared.setActivationPolicy(.prohibited)
+}
+
+func waitForStopSignal() async {
+    await Task.detached(priority: .userInitiated) {
+        _ = readLine()
+    }.value
+}
+
 func targetBitrate(width: Int, height: Int, fps: Int32, quality: String, codec: String) -> Int {
     let pixelsPerSecond = Double(width * height * Int(fps))
     let bitsPerPixel = switch quality {
@@ -286,6 +310,7 @@ func targetBitrate(width: Int, height: Int, fps: Int32, quality: String, codec: 
     return max(1_500_000, Int(pixelsPerSecond * bitsPerPixel * codecScale))
 }
 
+@MainActor
 func listTargets() async {
     do {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
@@ -306,9 +331,10 @@ func listTargets() async {
     }
 }
 
-let semaphore = DispatchSemaphore(value: 0)
-Task {
-    await run()
-    semaphore.signal()
+@main
+struct WrecHelper {
+    static func main() async {
+        await initializeGraphicsClient()
+        await run()
+    }
 }
-semaphore.wait()

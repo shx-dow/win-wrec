@@ -54,6 +54,19 @@ impl Quality {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenRecordingPermissionStatus {
+    Unknown,
+    Granted,
+    Missing,
+}
+
+impl ScreenRecordingPermissionStatus {
+    pub const fn is_granted(self) -> bool {
+        matches!(self, Self::Granted)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecorderSettings {
     pub source: CaptureSourceKind,

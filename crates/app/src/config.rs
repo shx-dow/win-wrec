@@ -9,6 +9,8 @@ use wrec_core::RecorderSettings;
 pub(crate) struct AppConfig {
     pub(crate) settings: RecorderSettings,
     pub(crate) selected_target_key: Option<String>,
+    #[serde(default)]
+    pub(crate) show_nerd_logs: bool,
 }
 
 impl Default for AppConfig {
@@ -16,6 +18,7 @@ impl Default for AppConfig {
         Self {
             settings: RecorderSettings::default(),
             selected_target_key: None,
+            show_nerd_logs: false,
         }
     }
 }
