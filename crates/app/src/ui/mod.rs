@@ -28,7 +28,7 @@ pub(crate) const WINDOW_MIN_HEIGHT: f32 = 500.;
 pub(crate) const SOURCE_OPTIONS: [&str; 2] = ["Display", "Window"];
 pub(crate) const CODEC_OPTIONS: [&str; 2] = ["HEVC", "H.264"];
 pub(crate) const QUALITY_OPTIONS: [&str; 3] = ["Balanced", "Efficient", "High"];
-pub(crate) const RESOLUTION_OPTIONS: [&str; 5] = ["Native", "4K", "2K", "1080p", "720p"];
+pub(crate) const RESOLUTION_OPTIONS: [&str; 5] = ["Original", "4K", "2K", "1080p", "720p"];
 pub(crate) const FPS_OPTIONS: [&str; 2] = ["30 FPS", "60 FPS"];
 
 const TAB_HEIGHT: f32 = 32.;
@@ -774,7 +774,7 @@ fn zero_metrics_label() -> String {
 
 pub(crate) fn resolution_label(resolution: Resolution) -> &'static str {
     match resolution {
-        Resolution::Native => "Native",
+        Resolution::Native => "Original",
         Resolution::R720p => "720p",
         Resolution::R1080p => "1080p",
         Resolution::R2k => "2K",
