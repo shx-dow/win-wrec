@@ -12,19 +12,23 @@ use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon as UiIcon, Root, Sizable as _, Theme, ThemeMode,
     WindowExt as _,
 };
-use wrec_core::{CaptureSourceKind, CaptureTarget, FrameRate, RecorderMetrics};
+use wrec_core::{
+    CaptureSourceKind, CaptureTarget, FrameRate, RecorderMetrics, Resolution,
+    ScreenRecordingPermissionStatus,
+};
 
 pub(crate) type ControlSelect = SelectState<Vec<&'static str>>;
 pub(crate) type TargetSelect = SelectState<Vec<TargetOption>>;
 
 pub(crate) const CONTROL_HEIGHT: f32 = 32.;
 pub(crate) const WINDOW_WIDTH: f32 = 430.;
-pub(crate) const WINDOW_HEIGHT: f32 = 450.;
+pub(crate) const WINDOW_HEIGHT: f32 = 540.;
 pub(crate) const WINDOW_MIN_WIDTH: f32 = 390.;
-pub(crate) const WINDOW_MIN_HEIGHT: f32 = 420.;
+pub(crate) const WINDOW_MIN_HEIGHT: f32 = 500.;
 pub(crate) const SOURCE_OPTIONS: [&str; 2] = ["Display", "Window"];
 pub(crate) const CODEC_OPTIONS: [&str; 2] = ["HEVC", "H.264"];
 pub(crate) const QUALITY_OPTIONS: [&str; 3] = ["Balanced", "Efficient", "High"];
+pub(crate) const RESOLUTION_OPTIONS: [&str; 5] = ["Native", "4K", "2K", "1080p", "720p"];
 pub(crate) const FPS_OPTIONS: [&str; 2] = ["30 FPS", "60 FPS"];
 
 const TAB_HEIGHT: f32 = 32.;
@@ -36,21 +40,26 @@ pub(crate) enum AppTab {
     General,
     Settings,
     About,
+    Nerd,
 }
 
 impl AppTab {
-    pub(crate) fn index(self) -> usize {
-        match self {
-            Self::General => 0,
-            Self::Settings => 1,
-            Self::About => 2,
+    pub(crate) fn index(self, show_nerd_logs: bool) -> usize {
+        match (self, show_nerd_logs) {
+            (Self::General, _) => 0,
+            (Self::Settings, _) => 1,
+            (Self::About, _) => 2,
+            (Self::Nerd, true) => 3,
+            (Self::Nerd, false) => 2,
         }
     }
 
-    pub(crate) fn from_index(index: usize) -> Self {
-        match index {
-            1 => Self::Settings,
-            2 => Self::About,
+    pub(crate) fn from_index(index: usize, show_nerd_logs: bool) -> Self {
+        match (index, show_nerd_logs) {
+            (0, _) => Self::General,
+            (1, _) => Self::Settings,
+            (2, _) => Self::About,
+            (3, true) => Self::Nerd,
             _ => Self::General,
         }
     }
@@ -89,13 +98,16 @@ impl SelectItem for TargetOption {
 
 impl WrecApp {
     pub(crate) fn render_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let refresh_disabled = self.recorder_state.is_busy() || self.recorder_state.is_recording();
+        let refresh_disabled = !self.permission_status.is_granted()
+            || self.permission_busy
+            || self.recorder_state.is_busy()
+            || self.recorder_state.is_recording();
 
         div().h(px(TAB_HEIGHT)).child(
             TabBar::new("wrec-tabs")
                 .large()
                 .w_full()
-                .selected_index(self.active_tab.index())
+                .selected_index(self.active_tab.index(self.show_nerd_logs))
                 .last_empty_space(
                     div()
                         .flex_1()
@@ -117,12 +129,15 @@ impl WrecApp {
                     ),
                 )
                 .on_click(cx.listener(|this, index: &usize, _, cx| {
-                    this.active_tab = AppTab::from_index(*index);
+                    this.active_tab = AppTab::from_index(*index, this.show_nerd_logs);
                     cx.notify();
                 }))
                 .child(Tab::new().child(tab_text("General")))
                 .child(Tab::new().child(tab_text("Settings")))
-                .child(Tab::new().child(tab_text("About"))),
+                .child(Tab::new().child(tab_text("About")))
+                .when(self.show_nerd_logs, |this| {
+                    this.child(Tab::new().child(tab_text("Nerd")))
+                }),
         )
     }
 
@@ -135,7 +150,6 @@ impl WrecApp {
         record_disabled: bool,
         controls_disabled: bool,
         muted_foreground: Hsla,
-        metrics_label: Option<String>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let source_row = div()
@@ -179,6 +193,14 @@ impl WrecApp {
                 .placeholder("Quality")
                 .disabled(controls_disabled),
         );
+        let resolution_row = labeled_select_row(
+            "Resolution",
+            muted_foreground,
+            Select::new(&self.resolution_select)
+                .h(px(CONTROL_HEIGHT))
+                .placeholder("Resolution")
+                .disabled(controls_disabled),
+        );
         let frame_rate_row = labeled_select_row(
             "Frame Rate",
             muted_foreground,
@@ -203,7 +225,7 @@ impl WrecApp {
             .flex_col()
             .flex_1()
             .min_h(px(0.))
-            .justify_between()
+            .gap_4()
             .child(
                 div()
                     .flex()
@@ -217,38 +239,22 @@ impl WrecApp {
                             .flex_col()
                             .gap_2()
                             .child(format_row)
+                            .child(resolution_row)
                             .child(quality_row)
                             .child(frame_rate_row)
                             .child(cursor_row),
                     ),
             )
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .when_some(metrics_label, |this, label| {
-                        this.child(
-                            div()
-                                .flex()
-                                .justify_end()
-                                .h(px(18.))
-                                .text_sm()
-                                .text_color(muted_foreground)
-                                .child(label),
-                        )
-                    })
-                    .child(
-                        record_button(
-                            record_icon,
-                            record_label,
-                            record_tip,
-                            record_is_idle,
-                            record_disabled,
-                            cx,
-                        )
-                        .w_full(),
-                    ),
+                record_button(
+                    record_icon,
+                    record_label,
+                    record_tip,
+                    record_is_idle,
+                    record_disabled,
+                    cx,
+                )
+                .w_full(),
             )
     }
 
@@ -262,7 +268,44 @@ impl WrecApp {
         div()
             .flex()
             .flex_col()
-            .gap_2()
+            .gap_3()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .min_h(px(CONTROL_HEIGHT))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .min_w(px(0.))
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child("Screen Recording"),
+                            )
+                            .child(
+                                UiButton::new("settings-retry-screen-recording")
+                                    .compact()
+                                    .ghost()
+                                    .size(px(28.))
+                                    .icon(UiIcon::new(PhosphorIcon::Shield))
+                                    .tooltip("Recheck Screen Recording permission")
+                                    .disabled(self.permission_busy)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.refresh_permission_status(false, cx);
+                                    })),
+                            ),
+                    )
+                    .child(permission_state_button(
+                        self.permission_status,
+                        self.permission_busy,
+                        cx,
+                    )),
+            )
             .child(switch_row(
                 "Theme",
                 if is_dark { "Dark" } else { "Light" },
@@ -280,6 +323,17 @@ impl WrecApp {
                         cx.notify();
                     })),
             ))
+            .child(switch_row(
+                "Logs",
+                if self.show_nerd_logs { "On" } else { "Off" },
+                muted_foreground,
+                Switch::new("logs-switch")
+                    .checked(self.show_nerd_logs)
+                    .tooltip("Show Nerd tab")
+                    .on_click(cx.listener(|this, checked, _, cx| {
+                        this.set_show_nerd_logs(*checked, cx);
+                    })),
+            ))
             .child(
                 div().w_full().h(px(CONTROL_HEIGHT)).child(
                     Input::new(&self.output_input)
@@ -288,18 +342,82 @@ impl WrecApp {
                 ),
             )
             .child(
-                UiButton::new("choose-output-dir")
-                    .outline()
-                    .w_full()
-                    .h(px(CONTROL_HEIGHT))
-                    .icon(UiIcon::new(PhosphorIcon::FolderOpen).text_color(muted_foreground))
-                    .label("Folder")
-                    .tooltip("Choose output folder")
-                    .disabled(controls_disabled)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.choose_output_dir(window, cx);
-                        cx.notify();
-                    })),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        UiButton::new("choose-output-dir")
+                            .outline()
+                            .flex_1()
+                            .h(px(CONTROL_HEIGHT))
+                            .icon(
+                                UiIcon::new(PhosphorIcon::FolderOpen).text_color(muted_foreground),
+                            )
+                            .label("Choose")
+                            .tooltip("Choose output folder")
+                            .disabled(controls_disabled)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.choose_output_dir(window, cx);
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        UiButton::new("open-last-recording-dir")
+                            .outline()
+                            .flex_1()
+                            .h(px(CONTROL_HEIGHT))
+                            .icon(
+                                UiIcon::new(PhosphorIcon::FolderOpen).text_color(muted_foreground),
+                            )
+                            .label("Open")
+                            .tooltip("Open last recording folder")
+                            .disabled(self.last_recording_dir.is_none())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_last_recording_dir(window, cx);
+                            })),
+                    ),
+            )
+    }
+
+    pub(crate) fn render_nerds_tab(
+        &self,
+        metrics_label: Option<String>,
+        muted_foreground: Hsla,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .flex_1()
+            .min_h(px(0.))
+            .child(nerd_section_title(
+                "Metrics",
+                muted_foreground,
+                metrics_label,
+            ))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(div().font_weight(FontWeight::MEDIUM).child("Logs"))
+                    .child(
+                        UiButton::new("open-recordings-data-dir")
+                            .outline()
+                            .compact()
+                            .h(px(CONTROL_HEIGHT))
+                            .icon(
+                                UiIcon::new(PhosphorIcon::FolderOpen).text_color(muted_foreground),
+                            )
+                            .label("Open")
+                            .tooltip("Open recordings data folder")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_recordings_data_dir(window, cx);
+                            })),
+                    ),
             )
     }
 
@@ -359,9 +477,20 @@ impl Render for WrecApp {
             } else {
                 (PhosphorIcon::Record, "Rec", "Start recording", true)
             };
-        let record_disabled = self.recorder_state.is_busy();
-        let controls_disabled = record_disabled || self.recorder_state.is_recording();
-        let metrics_label = self.metrics.as_ref().map(metrics_label);
+        let record_disabled = self.recorder_state.is_busy()
+            || (!self.recorder_state.is_recording()
+                && (self.permission_busy || !self.permission_status.is_granted()));
+        let controls_disabled = self.recorder_state.is_busy()
+            || self.permission_busy
+            || self.recorder_state.is_recording();
+        let metrics_label = Some(if self.recorder_state.is_recording() {
+            self.metrics
+                .as_ref()
+                .map(metrics_label)
+                .unwrap_or_else(zero_metrics_label)
+        } else {
+            zero_metrics_label()
+        });
 
         div()
             .id("wrec-root")
@@ -393,10 +522,18 @@ impl Render for WrecApp {
                                         record_disabled,
                                         controls_disabled,
                                         muted_foreground,
-                                        metrics_label,
                                         cx,
                                     )),
                                     AppTab::Settings => this.child(self.render_settings_tab(
+                                        controls_disabled,
+                                        muted_foreground,
+                                        is_dark,
+                                        cx,
+                                    )),
+                                    AppTab::Nerd if self.show_nerd_logs => this.child(
+                                        self.render_nerds_tab(metrics_label, muted_foreground, cx),
+                                    ),
+                                    AppTab::Nerd => this.child(self.render_settings_tab(
                                         controls_disabled,
                                         muted_foreground,
                                         is_dark,
@@ -411,6 +548,59 @@ impl Render for WrecApp {
                     ),
             )
             .children(notification_layer)
+    }
+}
+
+fn nerd_section_title(title: &'static str, muted_foreground: Hsla, detail: Option<String>) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .child(div().font_weight(FontWeight::MEDIUM).child(title))
+        .when_some(detail, |this, detail| {
+            this.child(
+                div()
+                    .text_sm()
+                    .text_color(muted_foreground)
+                    .truncate()
+                    .child(detail),
+            )
+        })
+}
+
+fn permission_state_button(
+    status: ScreenRecordingPermissionStatus,
+    busy: bool,
+    cx: &mut Context<WrecApp>,
+) -> UiButton {
+    let label = if busy {
+        "Checking"
+    } else if status.is_granted() {
+        "Granted"
+    } else {
+        "Grant"
+    };
+    let tooltip = if status.is_granted() {
+        "Screen Recording permission granted"
+    } else {
+        "Grant Screen Recording permission"
+    };
+    let button = UiButton::new("settings-screen-recording-state")
+        .compact()
+        .outline()
+        .h(px(CONTROL_HEIGHT))
+        .label(label)
+        .tooltip(tooltip)
+        .disabled(busy || status.is_granted())
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.request_screen_recording_permission(cx);
+        }));
+
+    if !busy && !status.is_granted() {
+        button.primary()
+    } else {
+        button
     }
 }
 
@@ -576,4 +766,18 @@ fn metrics_label(metrics: &RecorderMetrics) -> String {
         metrics.output_bytes as f32 / 1_000_000.,
         metrics.estimated_bitrate_mbps
     )
+}
+
+fn zero_metrics_label() -> String {
+    "0s  0.0 MB  0.0 Mbps".to_string()
+}
+
+pub(crate) fn resolution_label(resolution: Resolution) -> &'static str {
+    match resolution {
+        Resolution::Native => "Native",
+        Resolution::R720p => "720p",
+        Resolution::R1080p => "1080p",
+        Resolution::R2k => "2K",
+        Resolution::R4k => "4K",
+    }
 }

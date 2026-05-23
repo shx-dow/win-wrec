@@ -8,6 +8,7 @@ pub(crate) enum PhosphorIcon {
     Github,
     Record,
     Refresh,
+    Shield,
     Stop,
 }
 
@@ -18,6 +19,7 @@ impl IconNamed for PhosphorIcon {
             Self::Github => "icons/phosphor/github-logo.svg",
             Self::Record => "icons/phosphor/record.svg",
             Self::Refresh => "icons/phosphor/arrows-clockwise.svg",
+            Self::Shield => "icons/phosphor/shield.svg",
             Self::Stop => "icons/phosphor/stop.svg",
         }
         .into()
@@ -33,6 +35,7 @@ impl AssetSource for WrecAssets {
             "icons/phosphor/github-logo.svg" => phosphor_svgs::style::bold::GITHUB_LOGO,
             "icons/phosphor/record.svg" => phosphor_svgs::style::bold::RECORD,
             "icons/phosphor/arrows-clockwise.svg" => phosphor_svgs::style::bold::ARROWS_CLOCKWISE,
+            "icons/phosphor/shield.svg" => phosphor_svgs::style::bold::SHIELD,
             "icons/phosphor/stop.svg" => phosphor_svgs::style::bold::STOP,
             "icons/chevron-down.svg" => phosphor_svgs::style::bold::CARET_DOWN,
             "icons/circle-check.svg" => phosphor_svgs::style::bold::CHECK_CIRCLE,
