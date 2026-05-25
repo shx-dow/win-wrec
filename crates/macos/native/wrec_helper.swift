@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import ScreenCaptureKit
 import AVFoundation
+import AudioToolbox
 import CoreGraphics
 import CoreMedia
 import CoreVideo
@@ -10,17 +11,20 @@ final class SampleRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     let queue = DispatchQueue(label: "wrec.capture.writer", qos: .userInitiated)
 
     private let writer: AVAssetWriter
-    private let input: AVAssetWriterInput
+    private let videoInput: AVAssetWriterInput
+    private let audioInput: AVAssetWriterInput?
     private let started = DispatchSemaphore(value: 0)
     private let finished = DispatchSemaphore(value: 0)
     private var didStart = false
     private var didFinish = false
     private var frameCount: Int64 = 0
     private var droppedFrameCount: Int64 = 0
+    private var audioSampleCount: Int64 = 0
+    private var droppedAudioSampleCount: Int64 = 0
     private var firstPTS: CMTime?
     private var lastMetricTime = DispatchTime.now()
 
-    init(outputURL: URL, width: Int, height: Int, fps: Int32, codec: String, quality: String) throws {
+    init(outputURL: URL, width: Int, height: Int, fps: Int32, codec: String, quality: String, includeSystemAudio: Bool) throws {
         writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
 
         let bitrate = targetBitrate(width: width, height: height, fps: fps, quality: quality, codec: codec)
@@ -37,13 +41,32 @@ final class SampleRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             AVVideoCompressionPropertiesKey: compression,
         ]
 
-        input = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
-        input.expectsMediaDataInRealTime = true
+        videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
+        videoInput.expectsMediaDataInRealTime = true
 
-        guard writer.canAdd(input) else {
+        guard writer.canAdd(videoInput) else {
             throw HelperError.writerInputRejected
         }
-        writer.add(input)
+        writer.add(videoInput)
+
+        if includeSystemAudio {
+            let audioSettings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 48_000,
+                AVNumberOfChannelsKey: 2,
+                AVEncoderBitRateKey: 128_000,
+            ]
+            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
+            input.expectsMediaDataInRealTime = true
+
+            guard writer.canAdd(input) else {
+                throw HelperError.writerInputRejected
+            }
+            writer.add(input)
+            audioInput = input
+        } else {
+            audioInput = nil
+        }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
@@ -51,9 +74,17 @@ final class SampleRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
-        guard outputType == .screen else {
+        switch outputType {
+        case .screen:
+            appendVideo(sampleBuffer)
+        case .audio:
+            appendAudio(sampleBuffer)
+        default:
             return
         }
+    }
+
+    private func appendVideo(_ sampleBuffer: CMSampleBuffer) {
         guard sampleBuffer.isValid else {
             droppedFrameCount += 1
             return
@@ -81,18 +112,50 @@ final class SampleRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             started.signal()
         }
 
-        guard input.isReadyForMoreMediaData else {
+        guard videoInput.isReadyForMoreMediaData else {
             droppedFrameCount += 1
             return
         }
 
-        if input.append(sampleBuffer) {
+        if videoInput.append(sampleBuffer) {
             frameCount += 1
             emitMetricsIfNeeded(currentPTS: pts)
         } else {
             droppedFrameCount += 1
             if let error = writer.error {
-                FileHandle.standardError.write(Data("wrec-helper: writer append failed: \(error)\n".utf8))
+                FileHandle.standardError.write(Data("wrec-helper: video append failed: \(error)\n".utf8))
+            }
+        }
+    }
+
+    private func appendAudio(_ sampleBuffer: CMSampleBuffer) {
+        guard let audioInput else {
+            return
+        }
+        guard didStart, let firstPTS else {
+            droppedAudioSampleCount += 1
+            return
+        }
+        guard sampleBuffer.isValid else {
+            droppedAudioSampleCount += 1
+            return
+        }
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        guard pts.isValid, CMTimeCompare(pts, firstPTS) >= 0 else {
+            droppedAudioSampleCount += 1
+            return
+        }
+        guard audioInput.isReadyForMoreMediaData else {
+            droppedAudioSampleCount += 1
+            return
+        }
+
+        if audioInput.append(sampleBuffer) {
+            audioSampleCount += 1
+        } else {
+            droppedAudioSampleCount += 1
+            if let error = writer.error {
+                FileHandle.standardError.write(Data("wrec-helper: audio append failed: \(error)\n".utf8))
             }
         }
     }
@@ -114,12 +177,13 @@ final class SampleRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
                 self.writer.startSession(atSourceTime: .zero)
             }
 
-            self.input.markAsFinished()
+            self.videoInput.markAsFinished()
+            self.audioInput?.markAsFinished()
             self.writer.finishWriting {
                 if let error = self.writer.error {
                     FileHandle.standardError.write(Data("wrec-helper: writer finish failed: \(error)\n".utf8))
                 } else {
-                    FileHandle.standardError.write(Data("wrec-helper: recording finished frames=\(self.frameCount) dropped=\(self.droppedFrameCount)\n".utf8))
+                    FileHandle.standardError.write(Data("wrec-helper: recording finished frames=\(self.frameCount) dropped=\(self.droppedFrameCount) audio=\(self.audioSampleCount) audio_dropped=\(self.droppedAudioSampleCount)\n".utf8))
                 }
                 self.finished.signal()
             }
@@ -171,7 +235,7 @@ func run() async {
     }
 
     guard args.count >= 9 else {
-        fputs("usage: wrec_helper <output-path> <fps> <include-cursor> <display|window> <id> <hevc|h264> <efficient|balanced|high> <native|720p|1080p|2k|4k>\n", stderr)
+        fputs("usage: wrec_helper <output-path> <fps> <include-cursor> <display|window> <id> <hevc|h264> <efficient|balanced|high> <native|720p|1080p|2k|4k> [include-system-audio]\n", stderr)
         Foundation.exit(64)
     }
 
@@ -183,6 +247,7 @@ func run() async {
     let codec = args[6]
     let quality = args[7]
     let resolution = args[8]
+    let includeSystemAudio = args.count >= 10 ? args[9] == "true" : false
 
     guard ensureScreenCapturePermission() else {
         fputs("wrec-helper: permission denied: Screen Recording access is required\n", stderr)
@@ -234,12 +299,15 @@ func run() async {
         streamConfig.minimumFrameInterval = CMTime(value: 1, timescale: fps)
         streamConfig.queueDepth = quality == "high" ? 4 : 2
         streamConfig.showsCursor = includeCursor
-        streamConfig.capturesAudio = false
+        streamConfig.capturesAudio = includeSystemAudio
+        streamConfig.excludesCurrentProcessAudio = true
+        streamConfig.sampleRate = 48_000
+        streamConfig.channelCount = 2
         streamConfig.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
 
         FileHandle.standardError.write(
             Data(
-                "wrec-helper: target=\(targetKind) id=\(targetId) native=\(nativeSize.width)x\(nativeSize.height) size=\(captureWidth)x\(captureHeight) fps=\(fps) cursor=\(includeCursor) codec=\(codec) quality=\(quality) resolution=\(resolution) pipeline=scstream-avassetwriter\n"
+                "wrec-helper: target=\(targetKind) id=\(targetId) native=\(nativeSize.width)x\(nativeSize.height) size=\(captureWidth)x\(captureHeight) fps=\(fps) cursor=\(includeCursor) system_audio=\(includeSystemAudio) codec=\(codec) quality=\(quality) resolution=\(resolution) pipeline=scstream-avassetwriter\n"
                     .utf8
             )
         )
@@ -251,10 +319,14 @@ func run() async {
             height: captureHeight,
             fps: fps,
             codec: codec,
-            quality: quality
+            quality: quality,
+            includeSystemAudio: includeSystemAudio
         )
         let stream = SCStream(filter: filter, configuration: streamConfig, delegate: recorder)
         try stream.addStreamOutput(recorder, type: .screen, sampleHandlerQueue: recorder.queue)
+        if includeSystemAudio {
+            try stream.addStreamOutput(recorder, type: .audio, sampleHandlerQueue: recorder.queue)
+        }
 
         try await stream.startCapture()
         _ = recorder.waitUntilStarted(timeout: .seconds(3))

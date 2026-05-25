@@ -13,7 +13,7 @@ Why this route for v0:
 - Uses real native macOS ScreenCaptureKit immediately.
 - Keeps the frame path inside Apple's native stack.
 - Rust does not receive, copy, or retain raw pixels.
-- Uses `SCStreamOutput` and `AVAssetWriter` with HEVC `.mov` output.
+- Uses `SCStreamOutput` and `AVAssetWriter` with HEVC/AAC `.mov` output.
 
 Current recording path:
 
@@ -23,13 +23,13 @@ Rust GPUI app
   -> ScreenCaptureKit SCStream
   -> SCStreamOutput CMSampleBuffer
   -> AVAssetWriter / VideoToolbox
-  -> HEVC .mov
+  -> HEVC/AAC .mov
 ```
 
 The helper accepts the selected display/window target, fps, cursor setting,
-codec, and quality mode from the GPUI app. The helper keeps ScreenCaptureKit
-queue depth low and drops frames when the writer is backpressured rather than
-allowing memory to grow.
+system audio setting, codec, and quality mode from the GPUI app. The helper
+keeps ScreenCaptureKit queue depth low and drops samples when the writer is
+backpressured rather than allowing memory to grow.
 
 The next backend improvement is to replace AVAssetWriter-managed compression
 with an explicit `VTCompressionSession`:

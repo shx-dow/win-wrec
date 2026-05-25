@@ -282,6 +282,11 @@ mod platform {
             .arg(settings.codec.as_arg())
             .arg(settings.quality.as_arg())
             .arg(settings.resolution.as_arg())
+            .arg(if settings.include_system_audio {
+                "true"
+            } else {
+                "false"
+            })
             .stdin(Stdio::piped())
             .stdout(Stdio::inherit())
             .stderr(Stdio::piped())

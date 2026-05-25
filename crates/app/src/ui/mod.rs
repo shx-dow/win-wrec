@@ -219,6 +219,16 @@ impl WrecApp {
                     this.set_include_cursor(*checked, cx);
                 })),
         );
+        let audio_row = label_switch_row(
+            "System Audio",
+            Switch::new("system-audio-switch")
+                .checked(self.settings.include_system_audio)
+                .tooltip("Capture system audio")
+                .disabled(controls_disabled)
+                .on_click(cx.listener(|this, checked, _, cx| {
+                    this.set_include_system_audio(*checked, cx);
+                })),
+        );
 
         div()
             .flex()
@@ -242,7 +252,8 @@ impl WrecApp {
                             .child(resolution_row)
                             .child(quality_row)
                             .child(frame_rate_row)
-                            .child(cursor_row),
+                            .child(cursor_row)
+                            .child(audio_row),
                     ),
             )
             .child(

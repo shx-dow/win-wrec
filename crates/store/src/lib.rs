@@ -6,7 +6,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -85,6 +85,7 @@ pub struct RecordingRecord {
     pub resolution: String,
     pub fps: u32,
     pub include_cursor: bool,
+    pub include_system_audio: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -262,6 +263,7 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             resolution TEXT NOT NULL,
             fps INTEGER NOT NULL,
             include_cursor INTEGER NOT NULL,
+            include_system_audio INTEGER NOT NULL DEFAULT 1,
             native_width INTEGER,
             native_height INTEGER,
             output_width INTEGER,
@@ -298,10 +300,17 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings(status);
         CREATE INDEX IF NOT EXISTS idx_events_recording_time ON events(recording_id, timestamp_ms);
         CREATE INDEX IF NOT EXISTS idx_metrics_recording_time ON metrics(recording_id, timestamp_ms);
-
-        PRAGMA user_version = 1;
         ",
-    )
+    )?;
+
+    if version == 1 {
+        conn.execute(
+            "ALTER TABLE recordings ADD COLUMN include_system_audio INTEGER NOT NULL DEFAULT 1",
+            [],
+        )?;
+    }
+
+    conn.pragma_update(None, "user_version", SCHEMA_VERSION)
 }
 
 fn writer_loop(conn: Connection, receiver: mpsc::Receiver<StoreCommand>) {
@@ -352,8 +361,9 @@ fn upsert_recording(conn: &Connection, recording: &RecordingRecord) -> rusqlite:
             quality,
             resolution,
             fps,
-            include_cursor
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            include_cursor,
+            include_system_audio
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
         ON CONFLICT(id) DO UPDATE SET
             started_at_ms = excluded.started_at_ms,
             status = excluded.status,
@@ -365,7 +375,8 @@ fn upsert_recording(conn: &Connection, recording: &RecordingRecord) -> rusqlite:
             quality = excluded.quality,
             resolution = excluded.resolution,
             fps = excluded.fps,
-            include_cursor = excluded.include_cursor
+            include_cursor = excluded.include_cursor,
+            include_system_audio = excluded.include_system_audio
         ",
         params![
             u64_to_i64(recording.id),
@@ -380,6 +391,7 @@ fn upsert_recording(conn: &Connection, recording: &RecordingRecord) -> rusqlite:
             recording.resolution.as_str(),
             i64::from(recording.fps),
             bool_to_i64(recording.include_cursor),
+            bool_to_i64(recording.include_system_audio),
         ],
     )?;
     Ok(())

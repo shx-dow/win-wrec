@@ -28,6 +28,8 @@
 	<true/>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Wrec needs Screen Recording access to capture selected displays and windows.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Wrec needs Audio Recording access to capture system audio playing during screen recordings.</string>
 	<key>NSDocumentsFolderUsageDescription</key>
 	<string>Wrec needs access to save recordings when you choose a folder in Documents.</string>
 	<key>NSDownloadsFolderUsageDescription</key>

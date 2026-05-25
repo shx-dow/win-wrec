@@ -395,6 +395,20 @@ impl WrecApp {
         cx.notify();
     }
 
+    pub(crate) fn set_include_system_audio(
+        &mut self,
+        include_system_audio: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings.include_system_audio = include_system_audio;
+        self.push_log(format!(
+            "system audio: {}",
+            if include_system_audio { "on" } else { "off" }
+        ));
+        self.save_config();
+        cx.notify();
+    }
+
     pub(crate) fn set_show_nerd_logs(&mut self, show_nerd_logs: bool, cx: &mut Context<Self>) {
         self.show_nerd_logs = show_nerd_logs;
         if show_nerd_logs {
@@ -1033,6 +1047,7 @@ impl WrecApp {
                 resolution: settings.resolution.as_arg().to_string(),
                 fps: settings.fps.as_u32(),
                 include_cursor: settings.include_cursor,
+                include_system_audio: settings.include_system_audio,
             });
         }
     }

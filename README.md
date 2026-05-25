@@ -8,7 +8,7 @@ An M-series-first macOS screen recorder focused on a low-copy, hardware-accelera
 Rust GPUI app
   -> compiled Swift helper
   -> ScreenCaptureKit SCStream
-  -> SCStreamOutput CMSampleBuffer
+  -> SCStreamOutput CMSampleBuffer screen/audio
   -> CVPixelBuffer / IOSurface, NV12 where possible
   -> AVAssetWriter / VideoToolbox hardware encoder
   -> .mov
@@ -27,8 +27,9 @@ The helper:
 
 - Lists displays and windows with ScreenCaptureKit.
 - Captures screen frames with `SCStreamOutput`.
+- Captures system audio with ScreenCaptureKit when enabled.
 - Requests NV12 capture buffers where possible.
-- Writes real-time video through `AVAssetWriter`.
+- Writes real-time video and AAC audio through `AVAssetWriter`.
 - Uses HEVC by default, with H.264 available from the UI.
 - Keeps ScreenCaptureKit queue depth small.
 - Drops frames when the writer is backpressured instead of accumulating memory.
@@ -146,7 +147,7 @@ uploads the notarized `.dmg` to GitHub Releases.
 
 ## Current Limitations
 
-- No audio capture yet.
+- Microphone capture is not implemented.
 - Output is `.mov`.
 - Compression is currently AVAssetWriter-managed. Moving to an explicit `VTCompressionSession` is the next step if we need lower-level bitrate, keyframe, timestamp, and encoder control.
 - The Swift helper is still out-of-process. Packaged builds bundle and codesign it inside the `.app`; replacing it with an in-process native library remains the cleaner long-term shape.

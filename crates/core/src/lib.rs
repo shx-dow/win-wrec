@@ -99,6 +99,8 @@ pub struct RecorderSettings {
     pub resolution: Resolution,
     pub output_dir: PathBuf,
     pub include_cursor: bool,
+    #[serde(default = "default_include_system_audio")]
+    pub include_system_audio: bool,
 }
 
 impl Default for RecorderSettings {
@@ -111,8 +113,13 @@ impl Default for RecorderSettings {
             resolution: Resolution::Native,
             output_dir: dirs_output_dir(),
             include_cursor: true,
+            include_system_audio: true,
         }
     }
+}
+
+fn default_include_system_audio() -> bool {
+    true
 }
 
 fn dirs_output_dir() -> PathBuf {
@@ -219,5 +226,6 @@ mod tests {
         assert_eq!(settings.quality, Quality::Balanced);
         assert_eq!(settings.resolution, Resolution::Native);
         assert!(settings.include_cursor);
+        assert!(settings.include_system_audio);
     }
 }
