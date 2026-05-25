@@ -2,36 +2,51 @@
 
 An M-series-first macOS screen recorder focused on a low-copy, hardware-accelerated capture pipeline with a GPUI interface.
 
-## Current Pipeline
+## Architecture
+
+wrec is a Rust app with a small native macOS capture helper.
+
+- `crates/app` owns the GPUI window, controls, notifications, and app state.
+- `crates/core` defines shared recorder types: settings, targets, sessions,
+  metrics, and the recorder engine trait.
+- `crates/macos` implements the macOS recorder engine. It supervises the native
+  helper process and translates helper output into app events.
+- `crates/store` writes recording history, events, and metrics to SQLite.
+- `crates/macos/native/wrec_helper.swift` is the native capture and encode path.
+
+At runtime the flow is:
+
+```text
+User changes settings in the GPUI app
+  -> app asks the macOS recorder engine to start/stop
+  -> macOS engine starts the compiled Swift helper
+  -> helper captures and writes the .mov file
+  -> helper emits progress/errors/metrics
+  -> app updates UI state and persists records in SQLite
+```
+
+The media path stays inside Apple's native stack:
 
 ```text
 Rust GPUI app
-  -> macOS backend process supervisor
-  -> compiled Swift capture helper
+  -> macOS recorder engine
+  -> Swift helper
   -> ScreenCaptureKit SCStream
-      -> .screen CMSampleBuffer
-          -> CVPixelBuffer / IOSurface, NV12 where possible
-          -> AVAssetWriter video input
-          -> VideoToolbox hardware HEVC/H.264
-      -> .audio CMSampleBuffer when system audio is enabled
-          -> AVAssetWriter audio input
-          -> AAC
-  -> single .mov file
+  -> screen frames and optional system audio sample buffers
+  -> AVAssetWriter
+  -> VideoToolbox hardware video encode + AAC audio
+  -> .mov
 ```
 
-The recording path stays inside Apple's native media stack. Rust controls app
-state, target selection, settings, process lifecycle, and UI events; it does
-not receive, copy, or retain raw pixels or audio samples.
-
-Video owns the recording timeline. The helper starts the writer session at the
-first complete screen frame, then appends later system-audio buffers using
-their original ScreenCaptureKit timestamps. Any audio buffers that arrive before
-the first video frame are dropped instead of buffered, keeping startup memory
-bounded.
+Rust never receives, copies, or retains raw pixels or audio samples. It controls
+settings and process lifecycle; the helper owns capture, timestamps, encoding,
+and finalizing the file.
 
 ## Backend
 
-`crates/macos/build.rs` compiles `crates/macos/native/wrec_helper.swift` with `swiftc` into Cargo's build output. At runtime, the Rust backend launches that compiled helper directly.
+`crates/macos/build.rs` compiles `crates/macos/native/wrec_helper.swift` with
+`swiftc` into Cargo's build output. At runtime, the Rust backend launches that
+compiled helper directly.
 Packaged apps bundle the helper next to the main executable at
 `Wrec.app/Contents/MacOS/wrec-helper`; Cargo development falls back to the
 helper path emitted by the build script.
@@ -48,6 +63,11 @@ The helper:
 - Keeps ScreenCaptureKit queue depth small.
 - Drops samples when the writer is backpressured instead of accumulating memory.
 - Finalizes the writer deterministically on stop.
+
+Video owns the recording timeline. The helper starts the writer session at the
+first complete screen frame. If system audio is enabled, audio buffers are
+appended with their original ScreenCaptureKit timestamps after the video session
+has started.
 
 ## UI
 
@@ -75,11 +95,14 @@ Recording-affecting controls are disabled while recording so the UI cannot diver
 - Screen Recording permission denial maps to a typed recorder error.
 - The Swift helper is compiled during Cargo checks/tests, so Swift API breakage is caught early.
 
-## Workspace
+## Data
 
-- `crates/app` - GPUI app/window and UI state.
-- `crates/core` - shared recorder settings, session, metrics, and engine trait.
-- `crates/macos` - macOS backend and compiled native helper.
+- App config and SQLite data live in
+  `~/Library/Application Support/<app name>`.
+- Recordings default to `~/Movies/<app name>`.
+- Recording events and metrics are stored separately from the media file so the
+  UI can show history and debugging information without inspecting `.mov`
+  contents.
 
 ## Requirements
 
