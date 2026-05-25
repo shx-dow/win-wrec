@@ -4,6 +4,9 @@
 
 Cargo compiles the tiny Swift helper from `crates/macos/native/wrec_helper.swift`
 into the build output, and the app starts that compiled helper at runtime.
+Packaged builds copy the helper into `Wrec.app/Contents/MacOS/wrec-helper`, and
+the app resolves that packaged helper before falling back to Cargo's build
+output.
 
 Why this route for v0:
 
@@ -67,3 +70,20 @@ component:
 ```bash
 xcodebuild -downloadComponent MetalToolchain
 ```
+
+## Package
+
+```bash
+./scripts/package-macos.sh
+```
+
+By default this creates an ad-hoc signed `dist/dev/Wrec Dev.app` with the
+debug Cargo profile. Release packaging is explicit:
+
+```bash
+./scripts/package-macos.sh release
+```
+
+Release packaging creates `dist/release/Wrec.app` with the release Cargo
+profile and a `.dmg`. Set `CODESIGN_IDENTITY` for Developer ID signing and
+`NOTARIZE=1` with App Store Connect credentials to submit and staple the `.dmg`.

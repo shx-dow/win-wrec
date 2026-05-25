@@ -46,6 +46,14 @@ pub(crate) fn save_config(config: &AppConfig) -> std::io::Result<()> {
     write_config(&config_path(), config)
 }
 
+pub(crate) fn store_path() -> PathBuf {
+    wrec_dir().join("wrec.sqlite")
+}
+
+pub(crate) fn log_path() -> PathBuf {
+    wrec_dir().join("wrec.log")
+}
+
 fn load_legacy_config(path: &Path) -> Option<AppConfig> {
     legacy_config_paths().into_iter().find_map(|legacy_path| {
         match fs::read_to_string(&legacy_path) {
@@ -82,6 +90,27 @@ fn write_config(path: &Path, config: &AppConfig) -> std::io::Result<()> {
 }
 
 pub(crate) fn wrec_dir() -> PathBuf {
+    if let Some(path) = std::env::var_os("WREC_DATA_DIR").map(PathBuf::from) {
+        return path;
+    }
+
+    default_wrec_dir()
+}
+
+#[cfg(target_os = "macos")]
+fn default_wrec_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| {
+            home.join("Library")
+                .join("Application Support")
+                .join(app_name())
+        })
+        .unwrap_or_else(|| Path::new(".").join("Wrec"))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn default_wrec_dir() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .map(|home| home.join(".wrec"))
@@ -97,9 +126,22 @@ fn legacy_config_paths() -> Vec<PathBuf> {
         .map(PathBuf::from)
         .map(|home| {
             vec![
+                home.join(".wrec").join("config.json"),
                 home.join(".config").join("wrec").join("config.json"),
                 home.join(".config").join("wrec.json"),
             ]
         })
         .unwrap_or_else(|| vec![Path::new(".").join("wrec.json")])
+}
+
+#[cfg(target_os = "macos")]
+fn app_name() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| {
+            path.ancestors()
+                .filter_map(|path| path.file_name()?.to_str())
+                .find_map(|name| name.strip_suffix(".app").map(ToOwned::to_owned))
+        })
+        .unwrap_or_else(|| "Wrec".to_string())
 }

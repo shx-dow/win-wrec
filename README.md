@@ -19,6 +19,9 @@ The recording path stays inside Apple's native media stack. Rust controls app st
 ## Backend
 
 `crates/macos/build.rs` compiles `crates/macos/native/wrec_helper.swift` with `swiftc` into Cargo's build output. At runtime, the Rust backend launches that compiled helper directly.
+Packaged apps bundle the helper next to the main executable at
+`Wrec.app/Contents/MacOS/wrec-helper`; Cargo development falls back to the
+helper path emitted by the build script.
 
 The helper:
 
@@ -96,9 +99,54 @@ cargo check
 cargo test
 ```
 
+## Package
+
+The macOS packaging script has two channels.
+
+Contributor/dev builds are the default:
+
+```bash
+./scripts/package-macos.sh
+```
+
+This uses Cargo's dev profile and creates `dist/dev/Wrec Dev.app`.
+Dev packaging also writes `dist/dev/README.md` with the local open/rebuild
+commands and generated build details.
+
+Release builds are explicit:
+
+```bash
+./scripts/package-macos.sh release
+```
+
+This uses Cargo's release profile and creates `dist/release/Wrec.app`.
+Release packaging does not create a companion README.
+
+Both channels copy the Rust GPUI app as `wrec`, copy the compiled Swift
+`wrec-helper`, and sign both executables. Dev builds use the bundle identifier
+`app.wrec.wrec.dev`; release builds use `app.wrec.wrec`.
+
+Local packaging uses ad-hoc signing by default. Developer ID signing and
+notarization can be enabled for release builds with environment variables:
+
+```bash
+CODESIGN_IDENTITY="Developer ID Application: Example, Inc. (TEAMID)" \
+APPLE_ID="dev@example.com" \
+APPLE_TEAM_ID="TEAMID" \
+APPLE_APP_PASSWORD="app-specific-password" \
+NOTARIZE=1 \
+./scripts/package-macos.sh release
+```
+
+Runtime app data lives in `~/Library/Application Support/<app name>`.
+Recordings default to `~/Movies/<app name>`.
+
+Pushing a `v*` tag whose commit is on `main` runs the release workflow and
+uploads the notarized `.dmg` to GitHub Releases.
+
 ## Current Limitations
 
 - No audio capture yet.
 - Output is `.mov`.
 - Compression is currently AVAssetWriter-managed. Moving to an explicit `VTCompressionSession` is the next step if we need lower-level bitrate, keyframe, timestamp, and encoder control.
-- The compiled helper is a development-time Cargo output. A packaged app should bundle and codesign the helper inside the `.app`, or replace it with an in-process native library.
+- The Swift helper is still out-of-process. Packaged builds bundle and codesign it inside the `.app`; replacing it with an in-process native library remains the cleaner long-term shape.
