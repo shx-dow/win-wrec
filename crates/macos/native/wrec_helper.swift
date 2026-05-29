@@ -14,7 +14,6 @@ final class SampleRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private let writer: AVAssetWriter
     private let videoInput: AVAssetWriterInput
     private let audioInput: AVAssetWriterInput?
-    private let started = DispatchSemaphore(value: 0)
     private let finished = DispatchSemaphore(value: 0)
     private var didStart = false
     private var didFinish = false
@@ -127,7 +126,6 @@ final class SampleRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             firstPTS = adjustedPTS
             didStart = true
             FileHandle.standardError.write(Data("wrec-helper: recording started\n".utf8))
-            started.signal()
         }
 
         guard videoInput.isReadyForMoreMediaData else {
@@ -275,10 +273,6 @@ final class SampleRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             return nil
         }
         return adjusted
-    }
-
-    func waitUntilStarted(timeout: DispatchTimeInterval) -> Bool {
-        started.wait(timeout: .now() + timeout) == .success
     }
 
     func finish(timeout: DispatchTimeInterval) -> Bool {
@@ -453,7 +447,6 @@ func run() async {
         }
 
         try await stream.startCapture()
-        _ = recorder.waitUntilStarted(timeout: .seconds(3))
 
         // Parent process writes commands to stdin. EOF also stops.
         await waitForStopSignal(recorder: recorder)

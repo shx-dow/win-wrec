@@ -639,8 +639,7 @@ impl Render for WrecApp {
         };
         let record_disabled = matches!(
             self.recorder_state,
-            crate::app::RecorderState::CountingDown
-                | crate::app::RecorderState::Starting
+            crate::app::RecorderState::Starting
                 | crate::app::RecorderState::Pausing
                 | crate::app::RecorderState::Resuming
                 | crate::app::RecorderState::Stopping
