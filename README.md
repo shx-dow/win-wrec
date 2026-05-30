@@ -97,8 +97,7 @@ Recording-affecting controls are disabled while recording so the UI cannot diver
 
 ## Data
 
-- App config and SQLite data live in
-  `~/Library/Application Support/<app name>`.
+- App config and SQLite data live in `~/Library/Application Support/Wrec`.
 - Recordings default to `~/Movies/<app name>`.
 - Recording events and metrics are stored separately from the media file so the
   UI can show history and debugging information without inspecting `.mov`
@@ -190,7 +189,7 @@ NOTARIZE=1 \
 ./scripts/package-macos.sh release
 ```
 
-Runtime app data lives in `~/Library/Application Support/<app name>`.
+Runtime app data lives in `~/Library/Application Support/Wrec`.
 Recordings default to `~/Movies/<app name>`.
 
 Pushing a `v*` tag whose commit is on `main` runs the release workflow and

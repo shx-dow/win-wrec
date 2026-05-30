@@ -7272,9 +7272,19 @@ dependencies = [
  "phosphor-svgs",
  "tracing",
  "tracing-subscriber",
+ "wrec-backend",
  "wrec-config",
  "wrec-core",
  "wrec-macos",
+]
+
+[[package]]
+name = "wrec-backend"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "wrec-config",
+ "wrec-core",
  "wrec-store",
 ]
 
@@ -7284,10 +7294,9 @@ version = "0.1.0"
 dependencies = [
  "ctrlc",
  "serde_json",
- "wrec-config",
+ "wrec-backend",
  "wrec-core",
  "wrec-macos",
- "wrec-store",
 ]
 
 [[package]]

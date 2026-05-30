@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 wrec-core = { path = "../core" }
+wrec-backend = { path = "../backend" }
 wrec-config = { path = "../config" }
 wrec-macos = { path = "../macos" }
 anyhow.workspace = true
@@ -21,4 +22,3 @@ gpui.workspace = true
 gpui_platform.workspace = true
 gpui-component.workspace = true
 phosphor-svgs = "0.3.0"
-wrec-store = { version = "0.1.0", path = "../store" }

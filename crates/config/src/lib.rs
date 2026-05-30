@@ -5,6 +5,8 @@ use std::{
 };
 use wrec_core::RecorderSettings;
 
+const APP_DATA_DIR_NAME: &str = "Wrec";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub settings: RecorderSettings,
@@ -106,9 +108,9 @@ fn default_wrec_dir() -> PathBuf {
         .map(|home| {
             home.join("Library")
                 .join("Application Support")
-                .join(app_name())
+                .join(APP_DATA_DIR_NAME)
         })
-        .unwrap_or_else(|| Path::new(".").join("Wrec"))
+        .unwrap_or_else(|| Path::new(".").join(APP_DATA_DIR_NAME))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -123,17 +125,39 @@ fn legacy_config_paths() -> Vec<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .map(|home| {
-            vec![
+            let mut paths = legacy_app_support_config_paths(&home);
+            paths.extend([
                 home.join(".wrec").join("config.json"),
                 home.join(".config").join("wrec").join("config.json"),
                 home.join(".config").join("wrec.json"),
-            ]
+            ]);
+            paths
         })
         .unwrap_or_else(|| vec![Path::new(".").join("wrec.json")])
 }
 
 #[cfg(target_os = "macos")]
-fn app_name() -> String {
+fn legacy_app_support_config_paths(home: &Path) -> Vec<PathBuf> {
+    let app_support = home.join("Library").join("Application Support");
+    let mut names = vec!["Wrec Dev".to_string()];
+    let runtime_name = runtime_app_name();
+    if runtime_name != APP_DATA_DIR_NAME && runtime_name != "Wrec Dev" {
+        names.push(runtime_name);
+    }
+
+    names
+        .into_iter()
+        .map(|name| app_support.join(name).join("config.json"))
+        .collect()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn legacy_app_support_config_paths(_: &Path) -> Vec<PathBuf> {
+    Vec::new()
+}
+
+#[cfg(target_os = "macos")]
+fn runtime_app_name() -> String {
     std::env::current_exe()
         .ok()
         .and_then(|path| {
