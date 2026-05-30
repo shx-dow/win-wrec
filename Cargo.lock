@@ -7269,6 +7269,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wrec-cli"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wrec-core",
+ "wrec-macos",
+]
+
+[[package]]
 name = "wrec-core"
 version = "0.1.0"
 dependencies = [
