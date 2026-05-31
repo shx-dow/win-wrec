@@ -1,0 +1,4 @@
+{
+  "buildCommand": "rm -rf .astro node_modules/.astro dist && bun run build",
+  "installCommand": "bun install"
+}
