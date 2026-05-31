@@ -300,7 +300,7 @@ fn resolve_by_name(
     }
 
     Err(format!(
-        "no {label} matches `{query}`. Run `wrec-cli targets --json` and pass `--target kind:id` for an exact target."
+        "no {label} matches `{query}`. Run `wrec targets --json` and pass `--target kind:id` for an exact target."
     ))
 }
 
@@ -330,7 +330,7 @@ fn resolve_by_app(candidates: Vec<&CaptureTarget>, query: &str) -> Result<Captur
     }
 
     Err(format!(
-        "no app matches `{query}`. Run `wrec-cli targets --json` and pass `--target window:id` for an exact window."
+        "no app matches `{query}`. Run `wrec targets --json` and pass `--target window:id` for an exact window."
     ))
 }
 

@@ -7,7 +7,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>Wrec</string>
 	<key>CFBundleExecutable</key>
-	<string>wrec</string>
+	<string>wrec-app</string>
 	<key>CFBundleIdentifier</key>
 	<string>app.wrec.wrec</string>
 	<key>CFBundleInfoDictionaryVersion</key>

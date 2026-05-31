@@ -7262,6 +7262,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "beffa227304dbaea3ad6a06ac674f9bc83a3dec3b7f63eeb442de37e7cb6bb01"
 
 [[package]]
+name = "wrec"
+version = "0.1.0"
+dependencies = [
+ "ctrlc",
+ "serde_json",
+ "wrec-backend",
+ "wrec-core",
+ "wrec-macos",
+]
+
+[[package]]
 name = "wrec-app"
 version = "0.1.0"
 dependencies = [
@@ -7286,17 +7297,6 @@ dependencies = [
  "wrec-config",
  "wrec-core",
  "wrec-store",
-]
-
-[[package]]
-name = "wrec-cli"
-version = "0.1.0"
-dependencies = [
- "ctrlc",
- "serde_json",
- "wrec-backend",
- "wrec-core",
- "wrec-macos",
 ]
 
 [[package]]

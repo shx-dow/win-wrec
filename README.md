@@ -122,9 +122,9 @@ The terminal client is intended to be automation-first. It uses the same saved
 settings as the app, with flags acting as per-run overrides:
 
 ```bash
-cargo run -p wrec-cli -- targets --json
-cargo run -p wrec-cli -- record start --target display:1 --duration 30s
-cargo run -p wrec-cli -- record start --app Safari --duration 5m --json
+cargo run -p wrec -- targets --json
+cargo run -p wrec -- record start --target display:1 --duration 30s
+cargo run -p wrec -- record start --app Safari --duration 5m --json
 ```
 
 `list` remains an alias for `targets`, and `record` remains an alias for
@@ -175,13 +175,13 @@ Release builds are explicit:
 This uses Cargo's release profile and creates `dist/release/Wrec.app`.
 Release packaging does not create a companion README.
 
-Both channels copy the Rust GPUI app as `wrec`, copy the terminal client as
-`wrec-cli`, copy the compiled Swift `wrec-helper`, and sign each executable.
+Both channels copy the Rust GPUI app as `wrec-app`, copy the terminal client as
+`wrec`, copy the compiled Swift `wrec-helper`, and sign each executable.
 Dev builds use the bundle identifier `app.wrec.wrec.dev`; release builds use
 `app.wrec.wrec`.
 
 After installation, the bundled CLI lives at
-`/Applications/Wrec.app/Contents/MacOS/wrec-cli`.
+`/Applications/Wrec.app/Contents/MacOS/wrec`.
 
 Local packaging uses ad-hoc signing by default. Developer ID signing and
 notarization can be enabled for release builds with environment variables:

@@ -42,13 +42,13 @@ From the repository root:
 \`\`\`
 
 That command rebuilds the debug-profile app, recreates this app bundle from
-scratch, copies the current \`wrec\`, \`wrec-cli\`, and \`wrec-helper\`
+scratch, copies the current \`wrec-app\`, \`wrec\`, and \`wrec-helper\`
 binaries, signs them ad-hoc, and verifies the app signature.
 
 ## Run the bundled CLI
 
 \`\`\`bash
-"$APP_NAME.app/Contents/MacOS/wrec-cli" help
+"$APP_NAME.app/Contents/MacOS/wrec" help
 \`\`\`
 
 ## Release packaging
@@ -121,8 +121,8 @@ case "$CHANNEL" in
 esac
 
 APP_NAME="${APP_NAME:-$DEFAULT_APP_NAME}"
-BIN_NAME="${BIN_NAME:-wrec}"
-CLI_BIN_NAME="${CLI_BIN_NAME:-wrec-cli}"
+BIN_NAME="${BIN_NAME:-wrec-app}"
+CLI_BIN_NAME="${CLI_BIN_NAME:-wrec}"
 BUNDLE_ID="${BUNDLE_ID:-$DEFAULT_BUNDLE_ID}"
 PROFILE="${PROFILE:-$DEFAULT_PROFILE}"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
@@ -177,7 +177,7 @@ log "Notarization enabled: $NOTARIZE"
 log "Building Rust app and Swift helper"
 run cargo "${cargo_args[@]}" -p wrec-app --bin "$BIN_NAME"
 log "Building Rust CLI"
-run cargo "${cargo_args[@]}" -p wrec-cli --bin "$CLI_BIN_NAME"
+run cargo "${cargo_args[@]}" -p wrec --bin "$CLI_BIN_NAME"
 
 HELPER=""
 if [[ -d "$TARGET_DIR/$PROFILE_DIR/build" ]]; then
@@ -223,6 +223,7 @@ log "Writing bundle metadata"
 run /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$INFO_PLIST"
 run /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $APP_NAME" "$INFO_PLIST"
 run /usr/libexec/PlistBuddy -c "Set :CFBundleName $APP_NAME" "$INFO_PLIST"
+run /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $BIN_NAME" "$INFO_PLIST"
 run /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$INFO_PLIST"
 run /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$INFO_PLIST"
 

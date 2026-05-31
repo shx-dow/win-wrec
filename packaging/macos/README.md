@@ -7,8 +7,8 @@ Wrec*.app/
   Contents/
     Info.plist
     MacOS/
+      wrec-app
       wrec
-      wrec-cli
       wrec-helper
     Resources/
 ```
@@ -32,7 +32,7 @@ build details for that generated app.
 The dev CLI is bundled at:
 
 ```bash
-dist/dev/Wrec\ Dev.app/Contents/MacOS/wrec-cli
+dist/dev/Wrec\ Dev.app/Contents/MacOS/wrec
 ```
 
 For release packaging:

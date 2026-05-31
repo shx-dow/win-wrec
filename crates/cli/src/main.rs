@@ -14,7 +14,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Ok(Command::Version) => {
-            println!("wrec-cli {}", env!("CARGO_PKG_VERSION"));
+            println!("wrec {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
         Ok(Command::List(list_args)) => run::list(list_args),

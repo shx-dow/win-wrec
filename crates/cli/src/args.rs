@@ -63,10 +63,10 @@ impl Default for RecordArgs {
 }
 
 pub fn usage() -> String {
-    "wrec-cli - automate wrec screen recording from the terminal\n\
+    "wrec - automate wrec screen recording from the terminal\n\
      \n\
      Usage:\n\
-     \u{20}\u{20}wrec-cli <command> [options]\n\
+     \u{20}\u{20}wrec <command> [options]\n\
      \n\
      Commands:\n\
      \u{20}\u{20}targets [list]       List capture targets (displays and windows)\n\
