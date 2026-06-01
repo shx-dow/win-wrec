@@ -7273,9 +7273,9 @@ dependencies = [
  "phosphor-svgs",
  "tracing",
  "tracing-subscriber",
- "wrec-backend",
  "wrec-config",
  "wrec-core",
+ "wrec-daemon",
  "wrec-macos",
 ]
 
