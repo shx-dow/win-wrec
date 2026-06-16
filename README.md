@@ -4,17 +4,67 @@ An M-series-first macOS screen recorder focused on a low-copy, hardware-accelera
 
 ## Architecture
 
-wrec is a Rust app with a small native macOS capture helper.
+```text
+                  +----------------+
+                  |     core       |
+                  | domain types   |
+                  +--------+-------+
+                           |
+        +------------------+------------------+
+        |                                     |
++-------v------+                      +-------v------+
+|   wrec-app   |                      |   wrec CLI   |
+| GPUI client  |                      | terminal UX  |
++-------+------+                      +------+-------+
+        |                                    |
+        +---------------+--------------------+
+                        |
+                  +-----v------+
+                  |  control   |
+                  | IPC client |
+                  | protocol   |
+                  +-----+------+
+                        |
+                  Unix socket
+                        |
+                  +-----v------+
+                  |   daemon   |
+                  | queue/jobs |
+                  | settings   |
+                  | store I/O  |
+                  +-----+------+
+                        |
+                  +-----v------+
+                  |   macos    |
+                  | recorder   |
+                  +-----+------+
+                        |
+                  +-----v----------+
+                  | capture-engine |
+                  | SCK + writer   |
+                  +-----+----------+
+                        |
+        ScreenCaptureKit -> AVAssetWriter -> .mov
+```
+
+wrec is a Rust app, standalone CLI, local daemon, and native macOS capture
+engine process.
 
 - `crates/app` owns the GPUI window, controls, notifications, and app state.
 - `crates/core` defines shared recorder types: settings, targets, sessions,
   metrics, and the recorder engine trait.
+- `crates/control` defines the IPC protocol, daemon client, daemon discovery,
+  and daemon startup used by both app and CLI.
 - `crates/daemon` owns local IPC, one active recording job, queued jobs, and
   shared recording control for the app, CLI, and agents.
 - `crates/macos` implements the macOS recorder engine. It supervises the native
-  helper process and translates helper output into recorder events.
+  capture-engine process and translates capture output into recorder events.
 - `crates/store` writes recording history, events, and metrics to SQLite.
-- `crates/macos/native/wrec_helper.swift` is the native capture and encode path.
+- `crates/macos/native/capture_engine.swift` is the native capture and encode path.
+
+The important boundary is that `app` and `cli` are clients. They do not import
+backend, macOS recorder, store, or capture-engine code. They talk through
+`control`, and the daemon owns recording state.
 
 At runtime the flow is:
 
@@ -22,9 +72,9 @@ At runtime the flow is:
 User changes settings in the GPUI app
   -> app submits recording control to the local coordinator daemon
   -> daemon starts one active macOS recorder job or queues the request
-  -> macOS engine starts the compiled Swift helper
-  -> helper captures and writes the .mov file
-  -> helper emits progress/errors/metrics
+  -> macOS engine starts the compiled Swift capture engine
+  -> capture engine captures and writes the .mov file
+  -> capture engine emits progress/errors/metrics
   -> daemon persists records in SQLite and exposes job state over IPC
   -> app/CLI poll job state and update their UI/output
 ```
@@ -33,9 +83,10 @@ The media path stays inside Apple's native stack:
 
 ```text
 Rust GPUI app / CLI / agents
+  -> control protocol
   -> local coordinator daemon
   -> macOS recorder engine
-  -> Swift helper
+  -> Swift capture engine
   -> ScreenCaptureKit SCStream
   -> screen frames and optional system audio sample buffers
   -> AVAssetWriter
@@ -44,19 +95,18 @@ Rust GPUI app / CLI / agents
 ```
 
 Rust never receives, copies, or retains raw pixels or audio samples. It controls
-settings and process lifecycle; the helper owns capture, timestamps, encoding,
-and finalizing the file.
+settings and process lifecycle; the capture engine owns capture, timestamps,
+encoding, and finalizing the file.
 
 ## Backend
 
-`crates/macos/build.rs` compiles `crates/macos/native/wrec_helper.swift` with
+`crates/macos/build.rs` compiles `crates/macos/native/capture_engine.swift` with
 `swiftc` into Cargo's build output. At runtime, the Rust backend launches that
-compiled helper directly.
-Packaged apps bundle the helper next to the main executable at
-`Wrec.app/Contents/MacOS/wrec-helper`; Cargo development falls back to the
-helper path emitted by the build script.
+compiled capture engine directly. Packaged apps bundle it next to the daemon at
+`Wrec.app/Contents/MacOS/capture-engine`; Cargo development falls back to the
+capture-engine path emitted by the build script.
 
-The helper:
+The capture engine:
 
 - Lists displays and windows with ScreenCaptureKit.
 - Captures screen frames with `SCStreamOutput`.
@@ -69,10 +119,10 @@ The helper:
 - Drops samples when the writer is backpressured instead of accumulating memory.
 - Finalizes the writer deterministically on stop.
 
-Video owns the recording timeline. The helper starts the writer session at the
-first complete screen frame. If system audio is enabled, audio buffers are
-appended with their original ScreenCaptureKit timestamps after the video session
-has started.
+Video owns the recording timeline. The capture engine starts the writer session
+at the first complete screen frame. If system audio is enabled, audio buffers
+are appended with their original ScreenCaptureKit timestamps after the video
+session has started.
 
 ## UI
 
@@ -97,12 +147,12 @@ Recording-affecting controls are disabled while recording so the UI cannot diver
 
 ## Reliability
 
-- Recording events are session-scoped so stale helper events do not mutate the wrong recording state.
-- The macOS recorder only stops the helper on drop when it owns an active session.
+- Recording events are session-scoped so stale capture-engine events do not mutate the wrong recording state.
+- The macOS recorder only stops the capture engine on drop when it owns an active session.
 - The daemon keeps one active recording job and queues additional requests by default.
 - Stop has a timeout and kill fallback.
 - Screen Recording permission denial maps to a typed recorder error.
-- The Swift helper is compiled during Cargo checks/tests, so Swift API breakage is caught early.
+- The Swift capture engine is compiled during Cargo checks/tests, so Swift API breakage is caught early.
 
 ## Data
 
@@ -123,22 +173,32 @@ Recording-affecting controls are disabled while recording so the UI cannot diver
 
 ## Run
 
+During Cargo development, app/CLI clients can auto-start the daemon through the
+workspace. Building the daemon once still avoids the extra Cargo startup work:
+
 ```bash
-cargo run -p wrec-app
+cargo build -p daemon --bin daemon
+```
+
+Packaged and installed runtimes resolve the daemon beside the app/CLI runtime.
+Alternatively, set `WREC_DAEMON_BIN` to a daemon executable.
+
+```bash
+cargo run -p app
 ```
 
 The terminal client is intended to be automation-first. It uses the same saved
 settings as the app, with flags acting as per-run overrides:
 
 ```bash
-cargo run -p wrec -- targets --json
-cargo run -p wrec -- record start --target display:1 --duration 30s
-cargo run -p wrec -- record start --app Safari --duration 5m --json
-cargo run -p wrec -- jobs --json
-cargo run -p wrec -- job pause <job-id>
-cargo run -p wrec -- job resume <job-id>
-cargo run -p wrec -- job stop <job-id>
-cargo run -p wrec -- daemon stop
+cargo run -p cli -- targets --json
+cargo run -p cli -- record start --target display:1 --duration 30s
+cargo run -p cli -- record start --app Safari --duration 5m --json
+cargo run -p cli -- jobs --json
+cargo run -p cli -- job pause <job-id>
+cargo run -p cli -- job resume <job-id>
+cargo run -p cli -- job stop <job-id>
+cargo run -p cli -- daemon stop
 ```
 
 `list` remains an alias for `targets`, and `record` remains an alias for
@@ -204,13 +264,22 @@ This uses Cargo's release profile and creates `dist/release/Wrec.app`.
 Release packaging does not create a companion README. The release app icon is
 generated from `images/wrec.png`.
 
-Both channels copy the Rust GPUI app as `wrec-app`, copy the terminal client as
-`wrec`, copy the compiled Swift `wrec-helper`, and sign each executable.
-Dev builds use the bundle identifier `app.wrec.wrec.dev`; release builds use
+Both channels copy the Rust GPUI app as `wrec-app`, copy the daemon as `daemon`,
+copy the compiled Swift `capture-engine`, and sign each executable. Dev builds
+use the bundle identifier `app.wrec.wrec.dev`; release builds use
 `app.wrec.wrec`.
 
-After installation, the bundled CLI lives at
-`/Applications/Wrec.app/Contents/MacOS/wrec`.
+The standalone CLI runtime is packaged separately:
+
+```bash
+./scripts/package-cli-macos.sh release
+```
+
+Install it with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/shivamhwp/wrec/main/scripts/install-cli.sh | sh
+```
 
 Local packaging uses ad-hoc signing by default. Developer ID signing and
 notarization can be enabled for release builds with environment variables:
@@ -239,4 +308,4 @@ uploads the notarized `.dmg` to GitHub Releases.
 - Pause/resume currently retimes samples after a pause. The next efficiency
   pass is to verify AVAssetWriter session boundaries for pause gaps so we can
   avoid copying every later sample buffer.
-- The Swift helper is still out-of-process. Packaged builds bundle and codesign it inside the `.app`; replacing it with an in-process native library remains the cleaner long-term shape.
+- The Swift capture engine is still out-of-process. Packaged builds bundle and codesign it inside the `.app`; replacing it with an in-process native library remains the cleaner long-term shape.

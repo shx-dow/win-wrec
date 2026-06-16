@@ -1,8 +1,11 @@
 use crate::{
     coordinator::{lock_state, Coordinator, SharedCoordinator},
-    paths::{append_daemon_log, daemon_log_path, socket_path, wrec_home},
-    protocol::{response_error, AgentError, IpcRequest, IpcResponse, StartRecordingParams},
+    paths::append_daemon_log,
     runtime::{MacosRuntime, RecordingRuntime},
+};
+use control::{
+    daemon_log_path, response_error, socket_path, wrec_home, AgentError, IpcRequest, IpcResponse,
+    StartRecordingParams,
 };
 use serde_json::Value;
 use std::{
@@ -147,6 +150,8 @@ pub(crate) fn handle_request<R: RecordingRuntime>(
     let result = match request.method.as_str() {
         "daemon.status" => lock_state(&state).map(|state| state.status()),
         "daemon.stop" => Coordinator::daemon_stop(state),
+        "permission.status" => Coordinator::permission_status(state),
+        "permission.request" => Coordinator::permission_request(state),
         "targets.list" => Coordinator::targets_list(state),
         "record.start" => serde_json::from_value::<StartRecordingParams>(request.params)
             .map_err(|err| AgentError {

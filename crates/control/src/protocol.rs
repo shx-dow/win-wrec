@@ -1,11 +1,10 @@
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::path::PathBuf;
-use wrec_backend::RecordingOverrides;
-use wrec_core::{
+use domain::{
     CaptureSourceKind, CaptureTarget, Codec, FrameRate, Quality, RecorderMetrics, RecorderSettings,
     Resolution,
 };
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpcRequest {
@@ -82,23 +81,6 @@ pub struct RecordingOptions {
     pub hide_wrec: Option<bool>,
 }
 
-impl From<&RecordingOptions> for RecordingOverrides {
-    fn from(options: &RecordingOptions) -> Self {
-        Self {
-            source_kind: options.source_kind,
-            target_id: None,
-            fps: options.fps,
-            codec: options.codec,
-            quality: options.quality,
-            resolution: options.resolution,
-            output_dir: options.output_dir.clone(),
-            include_cursor: options.include_cursor,
-            include_system_audio: options.include_system_audio,
-            hide_wrec: options.hide_wrec,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StartRecordingParams {
     pub selector: Option<TargetSelector>,
@@ -147,7 +129,7 @@ fn default_queue() -> bool {
     true
 }
 
-pub(crate) fn response_error(id: u64, error: AgentError) -> IpcResponse {
+pub fn response_error(id: u64, error: AgentError) -> IpcResponse {
     IpcResponse {
         id,
         ok: false,
@@ -156,7 +138,7 @@ pub(crate) fn response_error(id: u64, error: AgentError) -> IpcResponse {
     }
 }
 
-pub(crate) fn generic_daemon_error() -> AgentError {
+pub fn generic_daemon_error() -> AgentError {
     AgentError {
         code: "daemon_error".into(),
         message: "Daemon returned an error without details.".into(),

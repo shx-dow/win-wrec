@@ -1,6 +1,11 @@
 use crate::{
     app::WrecApp,
     assets::{PhosphorIcon, GEIST_FONT_FAMILY, GEIST_MONO_FONT_FAMILY},
+    platform::CliInstallStatus,
+};
+use domain::{
+    CaptureSourceKind, CaptureTarget, FrameRate, Quality, RecorderMetrics, Resolution,
+    ScreenRecordingPermissionStatus,
 };
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
@@ -15,10 +20,6 @@ use gpui_component::{
     WindowExt as _,
 };
 use std::rc::Rc;
-use wrec_core::{
-    CaptureSourceKind, CaptureTarget, FrameRate, Quality, RecorderMetrics, Resolution,
-    ScreenRecordingPermissionStatus,
-};
 
 pub(crate) type ControlSelect = SelectState<Vec<&'static str>>;
 pub(crate) type LimitedSelect = SelectState<Vec<LimitedOption>>;
@@ -146,6 +147,7 @@ const DARK_PALETTE: ThemePalette = ThemePalette {
 pub(crate) enum AppTab {
     General,
     Settings,
+    Cli,
     About,
     Nerd,
 }
@@ -155,6 +157,7 @@ impl AppTab {
         match self {
             Self::General => "general",
             Self::Settings => "settings",
+            Self::Cli => "cli",
             Self::About => "about",
             Self::Nerd => "nerd",
         }
@@ -272,6 +275,12 @@ impl WrecApp {
                 "Settings",
                 AppTab::Settings,
                 AppTab::Settings.is_active(self.active_tab),
+                cx,
+            )),
+            Some(sidebar_nav_item(
+                "CLI",
+                AppTab::Cli,
+                AppTab::Cli.is_active(self.active_tab),
                 cx,
             )),
             Some(sidebar_nav_item(
@@ -603,6 +612,98 @@ impl WrecApp {
             )
     }
 
+    pub(crate) fn render_cli_tab(
+        &self,
+        muted_foreground: Hsla,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let cli_command = crate::platform::cli_install_command();
+        let cli_command_label = cli_command
+            .clone()
+            .unwrap_or_else(|| "Unavailable outside packaged app".to_string());
+        let cli_status_color = match self.cli_install_status {
+            CliInstallStatus::Conflict => cx.theme().danger,
+            _ => muted_foreground,
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .min_h(px(CONTROL_HEIGHT))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .items_baseline()
+                            .gap_2()
+                            .min_w(px(0.))
+                            .child(row_label("Status"))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cli_status_color)
+                                    .truncate()
+                                    .child(self.cli_install_status.label()),
+                            ),
+                    )
+                    .child(
+                        UiButton::new("cli-refresh-install")
+                            .link()
+                            .compact()
+                            .size(px(28.))
+                            .icon(UiIcon::new(PhosphorIcon::Refresh))
+                            .tooltip("Refresh CLI install status")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.refresh_cli_install_status(cx);
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .min_h(px(CONTROL_HEIGHT))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .items_baseline()
+                            .gap_2()
+                            .min_w(px(0.))
+                            .child(row_label("Command"))
+                            .child(
+                                div()
+                                    .min_w(px(0.))
+                                    .text_sm()
+                                    .text_color(muted_foreground)
+                                    .truncate()
+                                    .child(cli_command_label),
+                            ),
+                    )
+                    .child(
+                        UiButton::new("cli-copy-install")
+                            .outline()
+                            .compact()
+                            .size(px(28.))
+                            .icon(UiIcon::new(PhosphorIcon::Clipboard))
+                            .tooltip("Copy CLI install command")
+                            .disabled(cli_command.is_none())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.copy_cli_install_command(window, cx);
+                            })),
+                    ),
+            )
+    }
+
     pub(crate) fn render_nerds_tab(
         &self,
         metrics_label: Option<String>,
@@ -798,6 +899,9 @@ impl Render for WrecApp {
                                         muted_foreground,
                                         cx,
                                     )),
+                                    AppTab::Cli => {
+                                        this.child(self.render_cli_tab(muted_foreground, cx))
+                                    }
                                     AppTab::Nerd if self.show_nerd_logs => this.child(
                                         self.render_nerds_tab(metrics_label, muted_foreground, cx),
                                     ),

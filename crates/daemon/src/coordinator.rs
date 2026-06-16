@@ -1,10 +1,17 @@
 use crate::{
     jobs::JobRecord,
-    paths::{append_daemon_log, daemon_log_path, job_events_path, now_ms, socket_path, wrec_home},
-    protocol::{AgentError, AgentWarning, EventLevel, JobStatus, StartRecordingParams},
+    paths::append_daemon_log,
     runtime::RecordingRuntime,
     target_resolution::{resolve_record_target, settings_for_target},
 };
+use backend::{
+    build_settings_report, load_config, selected_target_id, BackendEvent, RecordingOverrides,
+};
+use control::{
+    daemon_log_path, job_events_path, now_ms, socket_path, wrec_home, AgentError, AgentWarning,
+    EventLevel, JobStatus, RecordingOptions, StartRecordingParams, PROTOCOL_VERSION,
+};
+use domain::{CaptureTarget, RecorderEngine, RecorderEvent};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -12,8 +19,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use wrec_backend::{build_settings_report, load_config, selected_target_id, BackendEvent};
-use wrec_core::{CaptureTarget, RecorderEngine, RecorderEvent};
 
 pub(crate) type SharedCoordinator<R> = Arc<Mutex<Coordinator<R>>>;
 
@@ -21,7 +26,7 @@ static TARGET_LIST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 pub(crate) struct Coordinator<R: RecordingRuntime> {
     runtime: R,
-    backend: wrec_backend::WrecBackend,
+    backend: backend::WrecBackend,
     jobs: BTreeMap<u64, JobRecord<R::Engine>>,
     queue: VecDeque<u64>,
     target_cache: Vec<CaptureTarget>,
@@ -34,7 +39,7 @@ impl<R: RecordingRuntime> Coordinator<R> {
     pub(crate) fn new(runtime: R) -> Self {
         Self {
             runtime,
-            backend: wrec_backend::WrecBackend::open(),
+            backend: backend::WrecBackend::open(),
             jobs: BTreeMap::new(),
             queue: VecDeque::new(),
             target_cache: Vec::new(),
@@ -52,6 +57,9 @@ impl<R: RecordingRuntime> Coordinator<R> {
 
     pub(crate) fn status(&self) -> Value {
         json!({
+            "daemon_version": env!("CARGO_PKG_VERSION"),
+            "protocol_version": PROTOCOL_VERSION,
+            "runtime_path": std::env::current_exe().ok(),
             "pid": std::process::id(),
             "home": wrec_home(),
             "socket": socket_path(),
@@ -104,6 +112,20 @@ impl<R: RecordingRuntime> Coordinator<R> {
         Ok(json!({ "targets": targets }))
     }
 
+    pub(crate) fn permission_status(state: SharedCoordinator<R>) -> Result<Value, AgentError> {
+        let status = lock_state(&state)?
+            .runtime
+            .screen_recording_permission_status()?;
+        Ok(json!({ "status": status }))
+    }
+
+    pub(crate) fn permission_request(state: SharedCoordinator<R>) -> Result<Value, AgentError> {
+        let status = lock_state(&state)?
+            .runtime
+            .request_screen_recording_permission()?;
+        Ok(json!({ "status": status }))
+    }
+
     pub(crate) fn record_start(
         state: SharedCoordinator<R>,
         params: StartRecordingParams,
@@ -119,7 +141,7 @@ impl<R: RecordingRuntime> Coordinator<R> {
 
         let (job, should_launch) = {
             let config = load_config();
-            let overrides = (&params.options).into();
+            let overrides = recording_overrides(&params.options);
             let (settings, warning) = build_settings_report(&config.settings, &overrides);
             let warnings = warning
                 .map(|message| AgentWarning {
@@ -334,6 +356,21 @@ impl<R: RecordingRuntime> Coordinator<R> {
     }
 }
 
+fn recording_overrides(options: &RecordingOptions) -> RecordingOverrides {
+    RecordingOverrides {
+        source_kind: options.source_kind,
+        target_id: None,
+        fps: options.fps,
+        codec: options.codec,
+        quality: options.quality,
+        resolution: options.resolution,
+        output_dir: options.output_dir.clone(),
+        include_cursor: options.include_cursor,
+        include_system_audio: options.include_system_audio,
+        hide_wrec: options.hide_wrec,
+    }
+}
+
 pub(crate) fn lock_state<R: RecordingRuntime>(
     state: &SharedCoordinator<R>,
 ) -> Result<MutexGuard<'_, Coordinator<R>>, AgentError> {
@@ -449,7 +486,7 @@ fn run_job<R: RecordingRuntime>(
     state: SharedCoordinator<R>,
     job_id: u64,
     target: CaptureTarget,
-    settings: wrec_core::RecorderSettings,
+    settings: domain::RecorderSettings,
     duration_ms: Option<u64>,
     engine: Arc<Mutex<R::Engine>>,
     rx: mpsc::Receiver<RecorderEvent>,
@@ -577,9 +614,9 @@ fn handle_recorder_event<R: RecordingRuntime>(
         } => {
             job.output_path = output_path.or_else(|| job.output_path.clone());
             if success {
-                job.mark_completed(format!("helper exited: {status}"));
+                job.mark_completed(format!("capture engine exited: {status}"));
             } else {
-                job.mark_failed(format!("helper exited: {status}"));
+                job.mark_failed(format!("capture engine exited: {status}"));
             }
             if active_matches {
                 state.active_job_id = None;
@@ -718,7 +755,7 @@ fn record_control_error(code: &str, id: u64, message: String) -> AgentError {
         message,
         recoverable: true,
         next: format!(
-            "Inspect `wrec job show {id} --json`; if the helper is stuck, restart the daemon."
+            "Inspect `wrec job show {id} --json`; if the capture engine is stuck, restart the daemon."
         ),
     }
 }
@@ -748,12 +785,12 @@ pub(crate) fn missing_job_error(id: u64) -> AgentError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{RecordingOptions, TargetSelector};
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use wrec_core::{
+    use control::{JobSnapshot, RecordingOptions, TargetSelector};
+    use domain::{
         CaptureSourceKind, RecorderError, RecorderSettings, RecordingSession,
-        Result as RecorderResult,
+        Result as RecorderResult, ScreenRecordingPermissionStatus,
     };
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -794,6 +831,18 @@ mod tests {
         fn list_targets(&self) -> std::result::Result<Vec<CaptureTarget>, AgentError> {
             self.list_calls.fetch_add(1, Ordering::Relaxed);
             Ok((*self.targets).clone())
+        }
+
+        fn screen_recording_permission_status(
+            &self,
+        ) -> std::result::Result<ScreenRecordingPermissionStatus, AgentError> {
+            Ok(ScreenRecordingPermissionStatus::Granted)
+        }
+
+        fn request_screen_recording_permission(
+            &self,
+        ) -> std::result::Result<ScreenRecordingPermissionStatus, AgentError> {
+            Ok(ScreenRecordingPermissionStatus::Granted)
         }
 
         fn new_engine(&self, events: mpsc::Sender<RecorderEvent>) -> Self::Engine {
@@ -965,7 +1014,7 @@ mod tests {
         wait_for_status(&state, job_id, JobStatus::Completed);
     }
 
-    fn start_job(state: SharedCoordinator<FakeRuntime>) -> crate::protocol::JobSnapshot {
+    fn start_job(state: SharedCoordinator<FakeRuntime>) -> JobSnapshot {
         let value = Coordinator::record_start(
             state,
             StartRecordingParams {
@@ -1010,11 +1059,8 @@ mod tests {
     }
 
     fn isolate_env() {
-        let dir = std::env::temp_dir().join(format!(
-            "wrec-daemon-test-{}-{}",
-            std::process::id(),
-            now_ms()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("daemon-test-{}-{}", std::process::id(), now_ms()));
         std::env::set_var("WREC_HOME", dir.join("home"));
         std::env::set_var("WREC_DATA_DIR", dir.join("data"));
     }

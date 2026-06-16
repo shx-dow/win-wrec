@@ -122,6 +122,33 @@ body {
   margin: 0;
 }
 
+.docs-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 28px 0 8px;
+  border-bottom: 1px solid #ddd;
+}
+
+.docs-tab {
+  appearance: none;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #555;
+  font: inherit;
+  line-height: 1.2;
+}
+
+.docs-tab:hover,
+.docs-tab[data-active="true"] {
+  color: #000;
+}
+
+.docs-tab[data-active="true"] {
+  border-bottom-color: #000;
+}
+
 .docs-page pre,
 .docs-page .code-pre {
   position: relative;
@@ -137,6 +164,20 @@ body {
   font-size: 0.85rem;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.architecture-diagram {
+  margin-top: 28px;
+}
+
+.architecture-diagram .code-pre {
+  overflow-wrap: normal;
+}
+
+.architecture-diagram .code-pre code {
+  white-space: pre;
+  word-spacing: normal;
+  overflow-wrap: normal;
 }
 
 .docs-page pre {

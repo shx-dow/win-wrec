@@ -74,7 +74,7 @@ final class SampleRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        FileHandle.standardError.write(Data("wrec-helper: stream stopped with error: \(error)\n".utf8))
+        FileHandle.standardError.write(Data("capture-engine: stream stopped with error: \(error)\n".utf8))
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
@@ -118,14 +118,14 @@ final class SampleRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
         if !didStart {
             guard writer.startWriting() else {
-                FileHandle.standardError.write(Data("wrec-helper: writer failed to start: \(writer.error?.localizedDescription ?? "unknown")\n".utf8))
+                FileHandle.standardError.write(Data("capture-engine: writer failed to start: \(writer.error?.localizedDescription ?? "unknown")\n".utf8))
                 droppedFrameCount += 1
                 return
             }
             writer.startSession(atSourceTime: adjustedPTS)
             firstPTS = adjustedPTS
             didStart = true
-            FileHandle.standardError.write(Data("wrec-helper: recording started\n".utf8))
+            FileHandle.standardError.write(Data("capture-engine: recording started\n".utf8))
         }
 
         guard videoInput.isReadyForMoreMediaData else {
@@ -139,7 +139,7 @@ final class SampleRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         } else {
             droppedFrameCount += 1
             if let error = writer.error {
-                FileHandle.standardError.write(Data("wrec-helper: video append failed: \(error)\n".utf8))
+                FileHandle.standardError.write(Data("capture-engine: video append failed: \(error)\n".utf8))
             }
         }
     }
@@ -179,7 +179,7 @@ final class SampleRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         } else {
             droppedAudioSampleCount += 1
             if let error = writer.error {
-                FileHandle.standardError.write(Data("wrec-helper: audio append failed: \(error)\n".utf8))
+                FileHandle.standardError.write(Data("capture-engine: audio append failed: \(error)\n".utf8))
             }
         }
     }
@@ -193,7 +193,7 @@ final class SampleRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             self.isPaused = true
             self.pendingResume = false
             self.pauseStartedPTS = nil
-            FileHandle.standardError.write(Data("wrec-helper: recording paused\n".utf8))
+            FileHandle.standardError.write(Data("capture-engine: recording paused\n".utf8))
         }
     }
 
@@ -205,7 +205,7 @@ final class SampleRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
             self.isPaused = false
             self.pendingResume = true
-            FileHandle.standardError.write(Data("wrec-helper: recording resumed\n".utf8))
+            FileHandle.standardError.write(Data("capture-engine: recording resumed\n".utf8))
         }
     }
 
@@ -292,9 +292,9 @@ final class SampleRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             self.audioInput?.markAsFinished()
             self.writer.finishWriting {
                 if let error = self.writer.error {
-                    FileHandle.standardError.write(Data("wrec-helper: writer finish failed: \(error)\n".utf8))
+                    FileHandle.standardError.write(Data("capture-engine: writer finish failed: \(error)\n".utf8))
                 } else {
-                    FileHandle.standardError.write(Data("wrec-helper: recording finished frames=\(self.frameCount) dropped=\(self.droppedFrameCount) audio=\(self.audioSampleCount) audio_dropped=\(self.droppedAudioSampleCount)\n".utf8))
+                    FileHandle.standardError.write(Data("capture-engine: recording finished frames=\(self.frameCount) dropped=\(self.droppedFrameCount) audio=\(self.audioSampleCount) audio_dropped=\(self.droppedAudioSampleCount)\n".utf8))
                 }
                 self.finished.signal()
             }
@@ -313,7 +313,7 @@ final class SampleRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         let elapsed = firstPTS.map { CMTimeSubtract(currentPTS, $0).seconds } ?? 0
         let elapsedSeconds = max(0, Int64(elapsed.rounded()))
         FileHandle.standardError.write(
-            Data("wrec-helper: metrics elapsed=\(elapsedSeconds) frames=\(frameCount) dropped=\(droppedFrameCount)\n".utf8)
+            Data("capture-engine: metrics elapsed=\(elapsedSeconds) frames=\(frameCount) dropped=\(droppedFrameCount)\n".utf8)
         )
     }
 }
@@ -338,7 +338,7 @@ func run() async {
 
     if args.count >= 2 && args[1] == "--list" {
         guard ensureScreenCapturePermission() else {
-            fputs("wrec-helper: permission denied: Screen Recording access is required\n", stderr)
+            fputs("capture-engine: permission denied: Screen Recording access is required\n", stderr)
             Foundation.exit(13)
         }
         await listTargets()
@@ -346,7 +346,7 @@ func run() async {
     }
 
     guard args.count >= 9 else {
-        fputs("usage: wrec_helper <output-path> <fps> <include-cursor> <display|window> <id> <hevc|h264> <efficient|balanced|high> <native|720p|1080p|2k|4k> [include-system-audio] [hide-wrec]\n", stderr)
+        fputs("usage: capture-engine <output-path> <fps> <include-cursor> <display|window> <id> <hevc|h264> <efficient|balanced|high> <native|720p|1080p|2k|4k> [include-system-audio] [hide-wrec]\n", stderr)
         Foundation.exit(64)
     }
 
@@ -362,7 +362,7 @@ func run() async {
     let hideWrec = args.count >= 11 ? args[10] == "true" : true
 
     guard ensureScreenCapturePermission() else {
-        fputs("wrec-helper: permission denied: Screen Recording access is required\n", stderr)
+        fputs("capture-engine: permission denied: Screen Recording access is required\n", stderr)
         Foundation.exit(13)
     }
 
@@ -374,7 +374,7 @@ func run() async {
 
         if targetKind == "window" {
             guard let window = content.windows.first(where: { $0.windowID == targetId }) else {
-                fputs("wrec-helper: window not found\n", stderr)
+                fputs("capture-engine: window not found\n", stderr)
                 Foundation.exit(5)
             }
             filter = SCContentFilter(desktopIndependentWindow: window)
@@ -383,13 +383,13 @@ func run() async {
         } else {
             let display = content.displays.first(where: { $0.displayID == targetId }) ?? content.displays.first
             guard let display else {
-                fputs("wrec-helper: no display found\n", stderr)
+                fputs("capture-engine: no display found\n", stderr)
                 Foundation.exit(4)
             }
             let excludedWindows = hideWrec ? wrecWindows(in: content) : []
             if hideWrec {
                 FileHandle.standardError.write(
-                    Data("wrec-helper: excluding \(excludedWindows.count) Wrec window(s)\n".utf8)
+                    Data("capture-engine: excluding \(excludedWindows.count) Wrec window(s)\n".utf8)
                 )
             }
             filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
@@ -425,7 +425,7 @@ func run() async {
 
         FileHandle.standardError.write(
             Data(
-                "wrec-helper: target=\(targetKind) id=\(targetId) native=\(nativeSize.width)x\(nativeSize.height) size=\(captureWidth)x\(captureHeight) fps=\(fps) cursor=\(includeCursor) system_audio=\(includeSystemAudio) codec=\(codec) quality=\(quality) resolution=\(resolution) pipeline=scstream-avassetwriter\n"
+                "capture-engine: target=\(targetKind) id=\(targetId) native=\(nativeSize.width)x\(nativeSize.height) size=\(captureWidth)x\(captureHeight) fps=\(fps) cursor=\(includeCursor) system_audio=\(includeSystemAudio) codec=\(codec) quality=\(quality) resolution=\(resolution) pipeline=scstream-avassetwriter\n"
                     .utf8
             )
         )
@@ -453,11 +453,11 @@ func run() async {
 
         try await stream.stopCapture()
         guard recorder.finish(timeout: .seconds(15)) else {
-            fputs("wrec-helper: timed out waiting for writer finalization\n", stderr)
+            fputs("capture-engine: timed out waiting for writer finalization\n", stderr)
             Foundation.exit(6)
         }
     } catch {
-        fputs("wrec-helper: error: \(error)\n", stderr)
+        fputs("capture-engine: error: \(error)\n", stderr)
         Foundation.exit(1)
     }
 }
@@ -586,7 +586,7 @@ func listTargets() async {
             }
         }
     } catch {
-        fputs("wrec-helper: list error: \(error)\n", stderr)
+        fputs("capture-engine: list error: \(error)\n", stderr)
         Foundation.exit(1)
     }
 }

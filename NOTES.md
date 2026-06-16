@@ -2,11 +2,11 @@
 
 ## Current v0 backend
 
-Cargo compiles the tiny Swift helper from `crates/macos/native/wrec_helper.swift`
-into the build output, and the app starts that compiled helper at runtime.
-Packaged builds copy the helper into `Wrec.app/Contents/MacOS/wrec-helper`, and
-the app resolves that packaged helper before falling back to Cargo's build
-output.
+Cargo compiles the Swift capture engine from
+`crates/macos/native/capture_engine.swift` into the build output. The daemon
+starts that compiled capture engine at runtime. Packaged app builds copy
+`daemon` and `capture-engine` into `Wrec.app/Contents/MacOS`; standalone CLI
+packages copy `wrec`, `daemon`, and `capture-engine` into the CLI runtime.
 
 Why this route for v0:
 
@@ -18,18 +18,24 @@ Why this route for v0:
 Current recording path:
 
 ```text
-Rust GPUI app
-  -> spawn compiled Swift helper
+Rust GPUI app / CLI / agents
+  -> control protocol
+  -> daemon
+  -> spawn compiled Swift capture engine
   -> ScreenCaptureKit SCStream
   -> SCStreamOutput CMSampleBuffer
   -> AVAssetWriter / VideoToolbox
   -> HEVC/AAC .mov
 ```
 
-The helper accepts the selected display/window target, fps, cursor setting,
-system audio setting, codec, and quality mode from the GPUI app. The helper
-keeps ScreenCaptureKit queue depth low and drops samples when the writer is
+The capture engine accepts the selected display/window target, fps, cursor
+setting, system audio setting, codec, and quality mode from the daemon. It keeps
+ScreenCaptureKit queue depth low and drops samples when the writer is
 backpressured rather than allowing memory to grow.
+
+The app and CLI stay above the `control` crate. The daemon is the only process
+that owns target listing, permission requests, job queueing, recording state,
+store writes, and macOS recorder startup.
 
 The next backend improvement is to keep AVAssetWriter, but reduce avoidable work
 around it:
@@ -52,7 +58,8 @@ around it:
 
 ```bash
 cd Developer/ccing/wrec
-cargo run -p wrec-app
+cargo build -p daemon --bin daemon
+cargo run -p app
 ```
 
 If GPUI shader compilation fails, select full Xcode:
@@ -84,3 +91,12 @@ debug Cargo profile. Release packaging is explicit:
 Release packaging creates `dist/release/Wrec.app` with the release Cargo
 profile and a `.dmg`. Set `CODESIGN_IDENTITY` for Developer ID signing and
 `NOTARIZE=1` with App Store Connect credentials to submit and staple the `.dmg`.
+
+The standalone CLI runtime is packaged separately:
+
+```bash
+./scripts/package-cli-macos.sh release
+```
+
+That archive contains `wrec`, `daemon`, and `capture-engine` so the CLI can be
+installed without installing the app bundle.

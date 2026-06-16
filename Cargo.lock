@@ -78,6 +78,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "app"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "config",
+ "control",
+ "core",
+ "futures",
+ "gpui",
+ "gpui-component",
+ "gpui_platform",
+ "phosphor-svgs",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "ar_archive_writer"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -462,6 +479,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "backend"
+version = "0.1.0"
+dependencies = [
+ "config",
+ "core",
+ "store",
+ "tracing",
+]
+
+[[package]]
 name = "backtrace"
 version = "0.3.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -794,6 +821,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cli"
+version = "0.1.0"
+dependencies = [
+ "control",
+ "core",
+ "ctrlc",
+ "serde_json",
+]
+
+[[package]]
 name = "cocoa"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -918,6 +955,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "config"
+version = "0.1.0"
+dependencies = [
+ "core",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "console_error_panic_hook"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -928,12 +975,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "control"
+version = "0.1.0"
+dependencies = [
+ "core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "convert_case"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "633458d4ef8c78b72454de2d54fd6ab2e60f9e02be22f3c6104cdc8a4e0fceb9"
 dependencies = [
  "unicode-segmentation",
+]
+
+[[package]]
+name = "core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1188,6 +1253,19 @@ dependencies = [
  "dispatch2",
  "nix 0.31.3",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "daemon"
+version = "0.1.0"
+dependencies = [
+ "backend",
+ "control",
+ "core",
+ "macos",
+ "serde",
+ "serde_json",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3240,6 +3318,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a1b95cd5421ec55b445b5ae102f5ea0e768de1f82bd3001e11f426c269c3aea"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "macos"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "core",
+ "objc2",
+ "objc2-av-foundation",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-core-media",
+ "objc2-core-video",
+ "objc2-foundation",
+ "objc2-metal",
+ "objc2-screen-capture-kit",
+ "objc2-video-toolbox",
+ "tracing",
 ]
 
 [[package]]
@@ -5449,6 +5546,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "store"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
 name = "str_indices"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7260,105 +7366,6 @@ name = "workspace-hack"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "beffa227304dbaea3ad6a06ac674f9bc83a3dec3b7f63eeb442de37e7cb6bb01"
-
-[[package]]
-name = "wrec"
-version = "0.1.0"
-dependencies = [
- "ctrlc",
- "serde_json",
- "wrec-backend",
- "wrec-core",
- "wrec-daemon",
- "wrec-macos",
-]
-
-[[package]]
-name = "wrec-app"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures",
- "gpui",
- "gpui-component",
- "gpui_platform",
- "phosphor-svgs",
- "tracing",
- "tracing-subscriber",
- "wrec-config",
- "wrec-core",
- "wrec-daemon",
- "wrec-macos",
-]
-
-[[package]]
-name = "wrec-backend"
-version = "0.1.0"
-dependencies = [
- "tracing",
- "wrec-config",
- "wrec-core",
- "wrec-store",
-]
-
-[[package]]
-name = "wrec-config"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "tracing",
- "wrec-core",
-]
-
-[[package]]
-name = "wrec-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "wrec-daemon"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "tracing-subscriber",
- "wrec-backend",
- "wrec-core",
- "wrec-macos",
-]
-
-[[package]]
-name = "wrec-macos"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "objc2",
- "objc2-av-foundation",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-core-media",
- "objc2-core-video",
- "objc2-foundation",
- "objc2-metal",
- "objc2-screen-capture-kit",
- "objc2-video-toolbox",
- "tracing",
- "wrec-core",
-]
-
-[[package]]
-name = "wrec-store"
-version = "0.1.0"
-dependencies = [
- "rusqlite",
- "thiserror 1.0.69",
- "tracing",
-]
 
 [[package]]
 name = "writeable"

@@ -5,7 +5,7 @@ use std::{
 };
 
 fn main() {
-    println!("cargo:rerun-if-changed=native/wrec_helper.swift");
+    println!("cargo:rerun-if-changed=native/capture_engine.swift");
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
         return;
@@ -13,8 +13,8 @@ fn main() {
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
-    let source = manifest_dir.join("native").join("wrec_helper.swift");
-    let helper = out_dir.join("wrec-helper");
+    let source = manifest_dir.join("native").join("capture_engine.swift");
+    let capture_engine = out_dir.join("capture-engine");
     let module_cache = out_dir.join("swift-module-cache");
     let target_arch = match env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
         Ok("aarch64") => "arm64",
@@ -39,7 +39,7 @@ fn main() {
         .arg("-framework")
         .arg("AVFoundation")
         .arg("-o")
-        .arg(&helper)
+        .arg(&capture_engine)
         .arg(&source)
         .env("MACOSX_DEPLOYMENT_TARGET", "15.0")
         .stdin(Stdio::null())
@@ -48,11 +48,14 @@ fn main() {
 
     if !output.status.success() {
         panic!(
-            "failed to compile wrec Swift helper:\n{}{}",
+            "failed to compile capture-engine:\n{}{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
     }
 
-    println!("cargo:rustc-env=WREC_HELPER_PATH={}", helper.display());
+    println!(
+        "cargo:rustc-env=WREC_CAPTURE_ENGINE_PATH={}",
+        capture_engine.display()
+    );
 }

@@ -3,12 +3,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use wrec_config::{save_config, store_path, AppConfig};
-use wrec_core::{
+use config::{save_config, store_path, AppConfig};
+use domain::{
     CaptureSourceKind, CaptureTarget, Codec, FrameRate, Quality, RecorderEvent, RecorderMetrics,
     RecorderSettings, Resolution,
 };
-use wrec_store::{
+use store::{
     now_ms, CaptureDimensions, EventLevel, EventRecord, EventSource, MetricRecord, RecordingRecord,
     Store,
 };
@@ -205,7 +205,7 @@ impl WrecBackend {
                         EventLevel::Error
                     },
                     None,
-                    format!("helper exited: {status}"),
+                    format!("capture engine exited: {status}"),
                 );
                 self.active_session_id = None;
                 self.active_output_path = None;
@@ -468,8 +468,8 @@ pub fn capture_kind_arg(kind: CaptureSourceKind) -> &'static str {
 }
 
 pub fn recorder_event_source(message: &str) -> EventSource {
-    if message.starts_with("wrec-helper:") {
-        EventSource::Helper
+    if message.starts_with("capture-engine:") {
+        EventSource::CaptureEngine
     } else {
         EventSource::Backend
     }
@@ -583,9 +583,9 @@ mod tests {
     }
 
     #[test]
-    fn parses_capture_dimensions_from_helper_log() {
+    fn parses_capture_dimensions_from_capture_engine_log() {
         let dimensions = parse_capture_dimensions(
-            "wrec-helper: recording started native=3024x1964 size=1512x982",
+            "capture-engine: recording started native=3024x1964 size=1512x982",
         )
         .unwrap();
 

@@ -59,7 +59,7 @@ impl EventLevel {
 pub enum EventSource {
     App,
     Backend,
-    Helper,
+    CaptureEngine,
 }
 
 impl EventSource {
@@ -67,7 +67,7 @@ impl EventSource {
         match self {
             Self::App => "app",
             Self::Backend => "backend",
-            Self::Helper => "helper",
+            Self::CaptureEngine => "capture_engine",
         }
     }
 }

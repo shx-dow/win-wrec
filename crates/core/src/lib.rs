@@ -133,7 +133,8 @@ impl Resolution {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ScreenRecordingPermissionStatus {
     Unknown,
     Granted,
@@ -302,20 +303,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn codec_args_match_helper_contract() {
+    fn codec_args_match_capture_engine_contract() {
         assert_eq!(Codec::Hevc.as_arg(), "hevc");
         assert_eq!(Codec::H264.as_arg(), "h264");
     }
 
     #[test]
-    fn quality_args_match_helper_contract() {
+    fn quality_args_match_capture_engine_contract() {
         assert_eq!(Quality::Efficient.as_arg(), "efficient");
         assert_eq!(Quality::Balanced.as_arg(), "balanced");
         assert_eq!(Quality::High.as_arg(), "high");
     }
 
     #[test]
-    fn resolution_args_match_helper_contract() {
+    fn resolution_args_match_capture_engine_contract() {
         assert_eq!(Resolution::Native.as_arg(), "native");
         assert_eq!(Resolution::R720p.as_arg(), "720p");
         assert_eq!(Resolution::R1080p.as_arg(), "1080p");

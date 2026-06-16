@@ -15,14 +15,6 @@ use ui::{
 };
 
 fn main() {
-    if std::env::args().skip(1).eq(["daemon", "serve"]) {
-        if let Err(message) = wrec_daemon::serve_forever() {
-            eprintln!("error: {message}");
-            std::process::exit(1);
-        }
-        return;
-    }
-
     init_tracing();
 
     application().with_assets(WrecAssets).run(|cx: &mut App| {
@@ -61,7 +53,7 @@ fn init_tracing() {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
-    let path = wrec_config::log_path();
+    let path = config::log_path();
     if let Err(err) = create_parent_dir(&path) {
         eprintln!("failed to create log directory: {err}");
     }

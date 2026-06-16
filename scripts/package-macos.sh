@@ -81,13 +81,13 @@ From the repository root:
 \`\`\`
 
 That command rebuilds the debug-profile app, recreates this app bundle from
-scratch, copies the current \`wrec-app\`, \`wrec\`, and \`wrec-helper\`
+scratch, copies the current \`wrec-app\`, \`daemon\`, and \`capture-engine\`
 binaries, signs them ad-hoc, and verifies the app signature.
 
-## Run the bundled CLI
+## Run the bundled daemon
 
 \`\`\`bash
-"$APP_NAME.app/Contents/MacOS/wrec" help
+"$APP_NAME.app/Contents/MacOS/daemon"
 \`\`\`
 
 ## Release packaging
@@ -163,7 +163,7 @@ esac
 
 APP_NAME="${APP_NAME:-$DEFAULT_APP_NAME}"
 BIN_NAME="${BIN_NAME:-wrec-app}"
-CLI_BIN_NAME="${CLI_BIN_NAME:-wrec}"
+DAEMON_BIN_NAME="${DAEMON_BIN_NAME:-daemon}"
 BUNDLE_ID="${BUNDLE_ID:-$DEFAULT_BUNDLE_ID}"
 PROFILE="${PROFILE:-$DEFAULT_PROFILE}"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
@@ -217,27 +217,27 @@ log "Icon source: $ICON_SOURCE"
 log "Dmg enabled: $CREATE_DMG"
 log "Notarization enabled: $NOTARIZE"
 
-log "Building Rust app and Swift helper"
-run cargo "${cargo_args[@]}" -p wrec-app --bin "$BIN_NAME"
-log "Building Rust CLI"
-run cargo "${cargo_args[@]}" -p wrec --bin "$CLI_BIN_NAME"
+log "Building Rust app"
+run cargo "${cargo_args[@]}" -p app --bin "$BIN_NAME"
+log "Building daemon and capture engine"
+run cargo "${cargo_args[@]}" -p daemon --bin "$DAEMON_BIN_NAME"
 
-HELPER=""
+CAPTURE_ENGINE=""
 if [[ -d "$TARGET_DIR/$PROFILE_DIR/build" ]]; then
-  HELPER="$(find "$TARGET_DIR/$PROFILE_DIR/build" -path "*/out/wrec-helper" -type f -print | sort | tail -n 1)"
+  CAPTURE_ENGINE="$(find "$TARGET_DIR/$PROFILE_DIR/build" -path "*/out/capture-engine" -type f -print | sort | tail -n 1)"
 fi
-if [[ -z "$HELPER" ]]; then
-  die "Could not find compiled wrec-helper in $TARGET_DIR/$PROFILE_DIR/build"
+if [[ -z "$CAPTURE_ENGINE" ]]; then
+  die "Could not find compiled capture-engine in $TARGET_DIR/$PROFILE_DIR/build"
 fi
 
 if [[ ! -f "$TARGET_DIR/$PROFILE_DIR/$BIN_NAME" ]]; then
   die "Could not find compiled app binary at $TARGET_DIR/$PROFILE_DIR/$BIN_NAME"
 fi
-if [[ ! -f "$TARGET_DIR/$PROFILE_DIR/$CLI_BIN_NAME" ]]; then
-  die "Could not find compiled CLI binary at $TARGET_DIR/$PROFILE_DIR/$CLI_BIN_NAME"
+if [[ ! -f "$TARGET_DIR/$PROFILE_DIR/$DAEMON_BIN_NAME" ]]; then
+  die "Could not find compiled daemon binary at $TARGET_DIR/$PROFILE_DIR/$DAEMON_BIN_NAME"
 fi
 
-log "Using helper: $HELPER"
+log "Using capture engine: $CAPTURE_ENGINE"
 log "Recreating app bundle from scratch"
 if [[ "$CHANNEL" == "dev" ]]; then
   log "Clearing previous dev build directory"
@@ -249,8 +249,8 @@ run mkdir -p "$MACOS" "$RESOURCES"
 
 log "Copying executables and metadata"
 run cp "$TARGET_DIR/$PROFILE_DIR/$BIN_NAME" "$MACOS/$BIN_NAME"
-run cp "$TARGET_DIR/$PROFILE_DIR/$CLI_BIN_NAME" "$MACOS/$CLI_BIN_NAME"
-run cp "$HELPER" "$MACOS/wrec-helper"
+run cp "$TARGET_DIR/$PROFILE_DIR/$DAEMON_BIN_NAME" "$MACOS/$DAEMON_BIN_NAME"
+run cp "$CAPTURE_ENGINE" "$MACOS/capture-engine"
 run cp "$ROOT/packaging/macos/Info.plist" "$INFO_PLIST"
 generate_app_icon "$ICON_SOURCE"
 
@@ -267,9 +267,9 @@ if [[ "$CODESIGN_IDENTITY" != "-" ]]; then
   sign_args+=(--timestamp)
 fi
 
-log "Signing helper, CLI, and app"
-run codesign "${sign_args[@]}" "$MACOS/wrec-helper"
-run codesign "${sign_args[@]}" "$MACOS/$CLI_BIN_NAME"
+log "Signing capture engine, daemon, and app"
+run codesign "${sign_args[@]}" "$MACOS/capture-engine"
+run codesign "${sign_args[@]}" "$MACOS/$DAEMON_BIN_NAME"
 run codesign "${sign_args[@]}" --entitlements "$ENTITLEMENTS" "$APP"
 log "Verifying app signature"
 run codesign --verify --deep --strict --verbose=2 "$APP"

@@ -8,14 +8,14 @@ Wrec*.app/
     Info.plist
     MacOS/
       wrec-app
-      wrec
-      wrec-helper
+      daemon
+      capture-engine
     Resources/
 ```
 
-The packaged app and CLI resolve `wrec-helper` beside their executable at
-runtime. Cargo development still falls back to the helper path emitted by
-`crates/macos/build.rs`.
+The packaged app resolves `daemon` beside its executable. The daemon resolves
+`capture-engine` beside its executable at runtime. Cargo development still falls
+back to the capture-engine path emitted by `crates/macos/build.rs`.
 
 For contributor/dev packaging:
 
@@ -28,12 +28,6 @@ signing, bundle id `app.wrec.wrec.dev`, app data in
 `~/Library/Application Support/Wrec Dev`, and recordings in `~/Movies/Wrec Dev`.
 It also writes `dist/dev/README.md` on every run with the local commands and
 build details for that generated app.
-
-The dev CLI is bundled at:
-
-```bash
-dist/dev/Wrec\ Dev.app/Contents/MacOS/wrec
-```
 
 Dev packaging uses `images/wrec-dev.png` as the app icon.
 
@@ -69,6 +63,25 @@ NOTARIZE=1 \
 
 Set `ICON_SOURCE=/path/to/icon.png` to override the channel's default icon.
 
+## CLI packaging
+
+`scripts/package-cli-macos.sh` assembles the standalone CLI runtime:
+
+```text
+wrec-cli/
+  wrec
+  daemon
+  capture-engine
+```
+
+The resulting archive is written to `dist/cli/wrec-cli-<target>.tar.gz`.
+`scripts/install-cli.sh` installs that runtime under `/usr/local/lib/wrec` and
+places a managed wrapper at `/usr/local/bin/wrec`.
+
+This package is intentionally separate from the app bundle. It carries the same
+daemon and capture-engine runtime so terminal users and agents can install
+`wrec` without copying files out of `Wrec.app`.
+
 ## GitHub release workflow
 
 `.github/workflows/release.yml` publishes macOS release downloads when a `v*`
@@ -76,8 +89,8 @@ tag is pushed and the tagged commit is on `origin/main`. GitHub Actions cannot
 filter tags by source branch in the trigger itself, so the workflow does an
 explicit ancestry check before packaging.
 
-The workflow uploads the notarized `.dmg` as a GitHub Release asset. Required
-repository secrets:
+The workflow uploads the notarized `.dmg` and the standalone CLI runtime archive
+as GitHub Release assets. Required repository secrets:
 
 - `MACOS_CERTIFICATE_BASE64` - base64-encoded Developer ID Application `.p12`
 - `MACOS_CERTIFICATE_PASSWORD` - password for that `.p12`

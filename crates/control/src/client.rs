@@ -4,24 +4,49 @@ use crate::{
         generic_daemon_error, AgentError, IpcRequest, IpcResponse, JobEvent, JobSnapshot,
         JobStatus, StartRecordingParams,
     },
+    PROTOCOL_VERSION,
 };
+use domain::{CaptureTarget, ScreenRecordingPermissionStatus};
 use serde_json::{json, Value};
 use std::{
+    ffi::OsString,
     fs::OpenOptions,
     io::{BufRead, BufReader, Write},
     os::unix::{net::UnixStream, process::CommandExt},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
-use wrec_core::CaptureTarget;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(3);
+const CARGO_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const WAIT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const IPC_READ_TIMEOUT: Duration = Duration::from_secs(10);
 const IPC_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+
+struct DaemonLaunch {
+    program: PathBuf,
+    args: Vec<OsString>,
+    startup_timeout: Duration,
+}
+
+impl DaemonLaunch {
+    fn executable(path: PathBuf) -> Self {
+        Self {
+            program: path,
+            args: Vec::new(),
+            startup_timeout: STARTUP_TIMEOUT,
+        }
+    }
+
+    fn command(&self) -> Command {
+        let mut command = Command::new(&self.program);
+        command.args(&self.args);
+        command
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct DaemonClient;
@@ -124,6 +149,20 @@ impl DaemonClient {
         self.request_result("daemon.stop", json!({}))
     }
 
+    pub fn screen_recording_permission_status(
+        &self,
+    ) -> Result<ScreenRecordingPermissionStatus, AgentError> {
+        let result = self.request_result("permission.status", json!({}))?;
+        decode_result_field(result, "status", "permission_status_decode_failed")
+    }
+
+    pub fn request_screen_recording_permission(
+        &self,
+    ) -> Result<ScreenRecordingPermissionStatus, AgentError> {
+        let result = self.request_result("permission.request", json!({}))?;
+        decode_result_field(result, "status", "permission_status_decode_failed")
+    }
+
     pub fn list_targets(&self) -> Result<Vec<CaptureTarget>, AgentError> {
         let result = self.request_result("targets.list", json!({}))?;
         serde_json::from_value(result.get("targets").cloned().unwrap_or_else(|| json!([])))
@@ -190,7 +229,8 @@ impl DaemonClient {
 
 pub fn ensure_daemon() -> Result<(), AgentError> {
     let client = DaemonClient::new();
-    if client.status().is_ok() {
+    if let Ok(status) = client.status() {
+        validate_daemon_status(&status)?;
         return Ok(());
     }
 
@@ -217,11 +257,10 @@ pub fn ensure_daemon() -> Result<(), AgentError> {
         recoverable: true,
         next: "Check permissions for ~/.wrec and try again.".into(),
     })?;
-    let exe = daemon_executable()?;
+    let launch = daemon_launch()?;
 
-    Command::new(exe)
-        .arg("daemon")
-        .arg("serve")
+    launch
+        .command()
         .process_group(0)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
@@ -235,8 +274,9 @@ pub fn ensure_daemon() -> Result<(), AgentError> {
         })?;
 
     let started = Instant::now();
-    while started.elapsed() < STARTUP_TIMEOUT {
-        if client.status().is_ok() {
+    while started.elapsed() < launch.startup_timeout {
+        if let Ok(status) = client.status() {
+            validate_daemon_status(&status)?;
             return Ok(());
         }
         thread::sleep(POLL_INTERVAL);
@@ -247,11 +287,34 @@ pub fn ensure_daemon() -> Result<(), AgentError> {
         message: format!(
             "wrec daemon did not become reachable at {} within {}s",
             socket_path().display(),
-            STARTUP_TIMEOUT.as_secs()
+            launch.startup_timeout.as_secs()
         ),
         recoverable: true,
         next: "Inspect ~/.wrec/daemon.log, then run `wrec daemon serve` manually if needed.".into(),
     })
+}
+
+pub fn run_daemon_foreground() -> Result<(), AgentError> {
+    let status = daemon_launch()?
+        .command()
+        .status()
+        .map_err(|err| AgentError {
+            code: "daemon_start_failed".into(),
+            message: format!("Could not run wrec daemon: {err}"),
+            recoverable: true,
+            next: "Set WREC_DAEMON_BIN to a daemon executable and retry.".into(),
+        })?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(AgentError {
+            code: "daemon_exited".into(),
+            message: format!("wrec daemon exited with {status}"),
+            recoverable: true,
+            next: "Inspect ~/.wrec/daemon.log and retry.".into(),
+        })
+    }
 }
 
 pub fn send_request(method: &str, params: Value) -> Result<IpcResponse, AgentError> {
@@ -314,6 +377,15 @@ pub fn emit_job_event(json_output: bool, job_id: u64, event: &JobEvent) {
     }
 }
 
+fn decode_result_field<T: serde::de::DeserializeOwned>(
+    result: Value,
+    field: &str,
+    code: &str,
+) -> Result<T, AgentError> {
+    serde_json::from_value(result.get(field).cloned().unwrap_or(Value::Null))
+        .map_err(|err| protocol_mismatch(code, err))
+}
+
 fn protocol_mismatch(code: &str, err: serde_json::Error) -> AgentError {
     AgentError {
         code: code.into(),
@@ -323,26 +395,134 @@ fn protocol_mismatch(code: &str, err: serde_json::Error) -> AgentError {
     }
 }
 
-fn daemon_executable() -> Result<PathBuf, AgentError> {
+fn validate_daemon_status(status: &Value) -> Result<(), AgentError> {
+    let Some(protocol_version) = status.get("protocol_version").and_then(Value::as_u64) else {
+        return Err(incompatible_daemon_error("missing protocol_version"));
+    };
+
+    if protocol_version == PROTOCOL_VERSION {
+        Ok(())
+    } else {
+        Err(incompatible_daemon_error(format!(
+            "protocol_version {protocol_version}, expected {PROTOCOL_VERSION}"
+        )))
+    }
+}
+
+fn incompatible_daemon_error(reason: impl Into<String>) -> AgentError {
+    AgentError {
+        code: "daemon_incompatible".into(),
+        message: format!("Running daemon is incompatible: {}", reason.into()),
+        recoverable: true,
+        next: "Stop the daemon with `wrec daemon stop`, then retry with matching app/CLI/runtime versions.".into(),
+    }
+}
+
+fn daemon_launch() -> Result<DaemonLaunch, AgentError> {
     if let Some(path) = std::env::var_os("WREC_DAEMON_BIN").map(PathBuf::from) {
-        return Ok(path);
+        return Ok(DaemonLaunch::executable(path));
     }
 
     let current = std::env::current_exe().map_err(|err| AgentError {
         code: "daemon_start_failed".into(),
-        message: format!("Could not locate current wrec executable: {err}"),
+        message: format!("Could not locate current executable: {err}"),
         recoverable: false,
-        next: "Run `wrec daemon serve` manually from a known executable.".into(),
+        next: "Set WREC_DAEMON_BIN to a daemon executable and retry.".into(),
     })?;
 
-    if current.file_name().and_then(|name| name.to_str()) == Some("wrec") {
-        return Ok(current);
+    if let Some(path) = daemon_candidates(&current)
+        .into_iter()
+        .find(|path| path.is_file())
+    {
+        return Ok(DaemonLaunch::executable(path));
     }
 
-    let sibling_cli = current
-        .parent()
-        .map(|dir| dir.join("wrec"))
-        .filter(|path| path.is_file());
+    if let Some(launch) = dev_cargo_daemon_launch() {
+        return Ok(launch);
+    }
 
-    Ok(sibling_cli.unwrap_or(current))
+    Err(AgentError {
+        code: "daemon_start_failed".into(),
+        message: "Could not locate the wrec daemon executable.".into(),
+        recoverable: true,
+        next: "Build the daemon with `cargo build -p daemon --bin daemon`, install the wrec runtime, or set WREC_DAEMON_BIN to the daemon executable.".into(),
+    })
+}
+
+fn daemon_candidates(current: &Path) -> Vec<PathBuf> {
+    let Some(current_dir) = current.parent() else {
+        return vec![PathBuf::from("/usr/local/lib/wrec/daemon")];
+    };
+    let profile_dir = current_dir
+        .parent()
+        .filter(|_| current_dir.file_name().is_some_and(|name| name == "deps"));
+
+    [
+        Some(current_dir.join("daemon")),
+        profile_dir.map(|dir| dir.join("daemon")),
+        Some(PathBuf::from("/usr/local/lib/wrec/daemon")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+fn dev_cargo_daemon_launch() -> Option<DaemonLaunch> {
+    #[cfg(debug_assertions)]
+    {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let workspace = manifest_dir.parent()?.parent()?;
+        let manifest = workspace.join("Cargo.toml");
+        if !manifest.is_file() {
+            return None;
+        }
+
+        Some(DaemonLaunch {
+            program: std::env::var_os("CARGO")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("cargo")),
+            args: vec![
+                "run".into(),
+                "--manifest-path".into(),
+                manifest.into_os_string(),
+                "-p".into(),
+                "daemon".into(),
+                "--bin".into(),
+                "daemon".into(),
+                "--".into(),
+            ],
+            startup_timeout: CARGO_STARTUP_TIMEOUT,
+        })
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::daemon_candidates;
+    use std::path::PathBuf;
+
+    #[test]
+    fn daemon_candidates_prefer_sibling_daemon() {
+        let candidates = daemon_candidates(&PathBuf::from("/tmp/wrec/bin/wrec"));
+
+        assert_eq!(candidates[0], PathBuf::from("/tmp/wrec/bin/daemon"));
+    }
+
+    #[test]
+    fn daemon_candidates_include_profile_dir_for_deps_binary() {
+        let candidates = daemon_candidates(&PathBuf::from("/tmp/wrec/target/debug/deps/wrec-abc"));
+
+        assert_eq!(
+            candidates[0],
+            PathBuf::from("/tmp/wrec/target/debug/deps/daemon")
+        );
+        assert_eq!(
+            candidates[1],
+            PathBuf::from("/tmp/wrec/target/debug/daemon")
+        );
+    }
 }

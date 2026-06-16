@@ -1,9 +1,9 @@
+use domain::RecorderSettings;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
 };
-use wrec_core::RecorderSettings;
 
 // Keep app, CLI, and dev/release builds on one namespace so selected settings stay shared.
 const APP_DATA_DIR_NAME: &str = "Wrec";
@@ -172,7 +172,7 @@ fn runtime_app_name() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wrec_core::Resolution;
+    use domain::Resolution;
 
     #[test]
     fn missing_resolution_uses_recorder_settings_default() {

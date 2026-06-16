@@ -6,11 +6,12 @@ use std::{
     },
 };
 
-use serde_json::{json, Value};
-use wrec_daemon::{
-    emit_error, ensure_daemon, send_request, serve_forever, wait_for_job, AgentError, DaemonClient,
-    IpcResponse, JobSnapshot, JobStatus, RecordingOptions, StartRecordingParams, TargetSelector,
+use control::{
+    emit_error, ensure_daemon, run_daemon_foreground, send_request, wait_for_job, AgentError,
+    DaemonClient, IpcResponse, JobSnapshot, JobStatus, RecordingOptions, StartRecordingParams,
+    TargetSelector,
 };
+use serde_json::{json, Value};
 
 use crate::args::{DaemonCommand, JobCommand, JobsArgs, ListArgs, RecordArgs, TargetQuery};
 
@@ -85,10 +86,10 @@ fn install_record_interrupt_handler(job_id: u64) -> Result<(), ctrlc::Error> {
 
 pub fn daemon(command: DaemonCommand) -> ExitCode {
     match command {
-        DaemonCommand::Serve => match serve_forever() {
+        DaemonCommand::Serve => match run_daemon_foreground() {
             Ok(()) => ExitCode::SUCCESS,
-            Err(message) => {
-                eprintln!("error: {message}");
+            Err(error) => {
+                emit_error(&error, false);
                 ExitCode::FAILURE
             }
         },

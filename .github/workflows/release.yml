@@ -101,6 +101,9 @@ jobs:
           NOTARIZE: "1"
         run: ./scripts/package-macos.sh release
 
+      - name: Package CLI runtime
+        run: ./scripts/package-cli-macos.sh release
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -109,6 +112,7 @@ jobs:
 
           gh release create "$GITHUB_REF_NAME" \
             dist/release/*.dmg \
+            dist/cli/*.tar.gz \
             --target "${{ steps.tag.outputs.commit }}" \
             --title "$GITHUB_REF_NAME" \
             --notes "macOS release for $GITHUB_REF_NAME" \

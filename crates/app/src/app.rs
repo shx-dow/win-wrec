@@ -1,10 +1,19 @@
 use crate::{
-    platform::{choose_output_dir, open_path},
+    platform::{choose_output_dir, open_path, CliInstallStatus},
     ui::{
         fps_disabled, fps_label, fps_options_for, push_app_notification, resolution_disabled,
         resolution_label, resolution_options_for, target_key, AppTab, ControlSelect, LimitedOption,
         LimitedSelect, TargetOption, TargetSelect, CODEC_OPTIONS, QUALITY_OPTIONS, SOURCE_OPTIONS,
     },
+};
+use config::{save_config as persist_config, wrec_dir, AppConfig};
+use control::{
+    AgentError, DaemonClient, EventLevel, JobSnapshot, JobStatus, RecordingOptions,
+    StartRecordingParams, TargetSelector,
+};
+use domain::{
+    CaptureSourceKind, CaptureTarget, Codec, FrameRate, Quality, RecorderMetrics, RecorderSettings,
+    Resolution, ScreenRecordingPermissionStatus,
 };
 use futures::{channel::mpsc::UnboundedSender, StreamExt};
 use gpui::*;
@@ -17,19 +26,8 @@ use gpui_component::{
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
-    sync::mpsc,
     time::Duration,
 };
-use wrec_config::{save_config as persist_config, wrec_dir, AppConfig};
-use wrec_core::{
-    CaptureSourceKind, CaptureTarget, Codec, FrameRate, Quality, RecorderMetrics, RecorderSettings,
-    Resolution, ScreenRecordingPermissionStatus,
-};
-use wrec_daemon::{
-    AgentError, DaemonClient, JobSnapshot, JobStatus, RecordingOptions, StartRecordingParams,
-    TargetSelector,
-};
-use wrec_macos::MacosRecorder;
 
 pub(crate) const GITHUB_URL: &str = "https://github.com/shivamhwp/wrec";
 
@@ -105,6 +103,7 @@ pub(crate) struct WrecApp {
     pub(crate) permission_busy: bool,
     pub(crate) metrics: Option<RecorderMetrics>,
     pub(crate) status: String,
+    pub(crate) cli_install_status: CliInstallStatus,
     pub(crate) active_tab: AppTab,
     pub(crate) last_recording_dir: Option<PathBuf>,
     pub(crate) show_nerd_logs: bool,
@@ -234,6 +233,7 @@ impl WrecApp {
             permission_busy: false,
             metrics: None,
             status: "Idle".to_string(),
+            cli_install_status: crate::platform::cli_install_status(),
             active_tab: AppTab::General,
             last_recording_dir: None,
             show_nerd_logs: config.show_nerd_logs,
@@ -514,6 +514,36 @@ impl WrecApp {
         cx.notify();
     }
 
+    pub(crate) fn copy_cli_install_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cli_install_status = crate::platform::cli_install_status();
+        let Some(command) = crate::platform::cli_install_command() else {
+            self.show_error(
+                "Package Wrec as an app before installing the CLI",
+                window,
+                cx,
+            );
+            return;
+        };
+
+        cx.write_to_clipboard(ClipboardItem::new_string(command));
+        self.push_log("copied CLI install command");
+        push_app_notification(
+            window,
+            Notification::new().message("CLI install command copied"),
+            cx,
+        );
+        cx.notify();
+    }
+
+    pub(crate) fn refresh_cli_install_status(&mut self, cx: &mut Context<Self>) {
+        self.cli_install_status = crate::platform::cli_install_status();
+        self.push_log(format!(
+            "cli install status: {}",
+            self.cli_install_status.label()
+        ));
+        cx.notify();
+    }
+
     pub(crate) fn refresh_permission_status(
         &mut self,
         refresh_targets_after_granted: bool,
@@ -526,12 +556,13 @@ impl WrecApp {
         self.permission_busy = true;
         self.status = "Checking Screen Recording permission".to_string();
         self.push_log("checking Screen Recording permission");
+        let daemon = self.daemon.clone();
         let app_events = self.app_events.clone();
         std::thread::spawn(move || {
-            let (tx, _rx) = mpsc::channel();
-            let result = MacosRecorder::new(tx)
-                .screen_recording_permission_status()
-                .map_err(|err| err.to_string());
+            let result = daemon
+                .ensure()
+                .and_then(|_| daemon.screen_recording_permission_status())
+                .map_err(agent_error_message);
             let _ = app_events.unbounded_send(UiEvent::App(AppEvent::PermissionChecked {
                 result,
                 refresh_targets_after_granted,
@@ -548,12 +579,13 @@ impl WrecApp {
         self.permission_busy = true;
         self.status = "Requesting Screen Recording permission".to_string();
         self.push_log("requesting Screen Recording permission");
+        let daemon = self.daemon.clone();
         let app_events = self.app_events.clone();
         std::thread::spawn(move || {
-            let (tx, _rx) = mpsc::channel();
-            let result = MacosRecorder::new(tx)
-                .request_screen_recording_permission()
-                .map_err(|err| err.to_string());
+            let result = daemon
+                .ensure()
+                .and_then(|_| daemon.request_screen_recording_permission())
+                .map_err(agent_error_message);
             let _ = app_events.unbounded_send(UiEvent::App(AppEvent::PermissionRequested(result)));
         });
         cx.notify();
@@ -1172,7 +1204,7 @@ fn latest_error_message(job: &JobSnapshot) -> Option<String> {
     job.events
         .iter()
         .rev()
-        .find(|event| matches!(event.level, wrec_daemon::EventLevel::Error))
+        .find(|event| matches!(event.level, EventLevel::Error))
         .map(|event| event.message.clone())
 }
 
@@ -1222,7 +1254,7 @@ fn is_permission_message(message: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::recording_params;
-    use wrec_core::{CaptureSourceKind, CaptureTarget, RecorderSettings};
+    use domain::{CaptureSourceKind, CaptureTarget, RecorderSettings};
 
     #[test]
     fn app_recordings_do_not_queue_without_queue_ui() {

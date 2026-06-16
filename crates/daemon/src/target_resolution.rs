@@ -1,6 +1,6 @@
-use crate::protocol::{AgentError, TargetSelector};
-use wrec_backend::{capture_kind_arg, resolve_target};
-use wrec_core::{CaptureSourceKind, CaptureTarget, RecorderSettings};
+use backend::{capture_kind_arg, resolve_target};
+use control::{AgentError, TargetSelector};
+use domain::{CaptureSourceKind, CaptureTarget, RecorderSettings};
 
 pub(crate) fn resolve_record_target(
     targets: &[CaptureTarget],
@@ -174,7 +174,7 @@ fn target_error(message: String) -> AgentError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wrec_core::Resolution;
+    use domain::Resolution;
 
     #[test]
     fn settings_source_follows_resolved_target() {

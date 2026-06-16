@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use wrec_core::{CaptureSourceKind, Codec, FrameRate, Quality, Resolution};
+use domain::{CaptureSourceKind, Codec, FrameRate, Quality, Resolution};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {

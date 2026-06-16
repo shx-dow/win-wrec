@@ -339,10 +339,10 @@ test args::tests::record_rejects_bad_values ... FAILED
 
 test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 
-     Running unittests src/lib.rs (target/debug/deps/wrec_core-d4e5f6)
+     Running unittests src/lib.rs (target/debug/deps/domain-d4e5f6)
 
 running 1 test
-test tests::codec_args_match_helper_contract ... ok
+test tests::codec_args_match_capture_engine_contract ... ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 "#;
@@ -355,7 +355,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
         assert_eq!(report.suites[0].name, "wrec");
         assert_eq!(report.suites[0].passed, 1);
         assert_eq!(report.suites[0].failed, 1);
-        assert_eq!(report.suites[1].name, "wrec-core");
+        assert_eq!(report.suites[1].name, "domain");
         assert_eq!(report.suites[1].passed, 1);
 
         assert_eq!(report.tests.len(), 3);
@@ -363,7 +363,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
         assert_eq!(report.tests[0].status, "ok");
         assert_eq!(report.tests[1].suite, "wrec");
         assert_eq!(report.tests[1].status, "FAILED");
-        assert_eq!(report.tests[2].suite, "wrec-core");
+        assert_eq!(report.tests[2].suite, "domain");
     }
 
     #[test]

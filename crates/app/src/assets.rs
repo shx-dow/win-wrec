@@ -18,6 +18,7 @@ pub(crate) fn register_fonts(cx: &mut App) {
 
 #[derive(Clone, Copy)]
 pub(crate) enum PhosphorIcon {
+    Clipboard,
     FolderOpen,
     Github,
     Moon,
@@ -33,6 +34,7 @@ pub(crate) enum PhosphorIcon {
 impl IconNamed for PhosphorIcon {
     fn path(self) -> SharedString {
         match self {
+            Self::Clipboard => "icons/phosphor/clipboard-text.svg",
             Self::FolderOpen => "icons/phosphor/folder-open.svg",
             Self::Github => "icons/phosphor/github-logo.svg",
             Self::Moon => "icons/phosphor/moon.svg",
@@ -53,6 +55,7 @@ pub(crate) struct WrecAssets;
 impl AssetSource for WrecAssets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
         let svg = match path {
+            "icons/phosphor/clipboard-text.svg" => phosphor_svgs::style::bold::CLIPBOARD_TEXT,
             "icons/phosphor/folder-open.svg" => phosphor_svgs::style::bold::FOLDER_OPEN,
             "icons/phosphor/github-logo.svg" => phosphor_svgs::style::bold::GITHUB_LOGO,
             "icons/phosphor/moon.svg" => phosphor_svgs::style::bold::MOON,

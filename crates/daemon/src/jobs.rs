@@ -1,12 +1,10 @@
-use crate::{
-    paths::{append_job_event, now_ms},
-    protocol::{AgentWarning, EventLevel, JobEvent, JobSnapshot, JobStatus, TargetSelector},
-};
+use crate::paths::append_job_event;
+use control::{now_ms, AgentWarning, EventLevel, JobEvent, JobSnapshot, JobStatus, TargetSelector};
+use domain::{CaptureTarget, RecorderMetrics, RecorderSettings};
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use wrec_core::{CaptureTarget, RecorderMetrics, RecorderSettings};
 
 pub(crate) struct JobRecord<E> {
     pub(crate) id: u64,

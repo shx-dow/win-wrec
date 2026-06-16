@@ -4,6 +4,7 @@ members = [
   "crates/backend",
   "crates/cli",
   "crates/config",
+  "crates/control",
   "crates/core",
   "crates/daemon",
   "crates/macos",

@@ -1,4 +1,4 @@
-use wrec_core::{
+use domain::{
     CaptureSourceKind, CaptureTarget, RecorderEngine, RecorderError, RecorderEvent,
     RecorderMetrics, RecorderSettings, RecordingSession, Result, ScreenRecordingPermissionStatus,
 };
@@ -187,7 +187,7 @@ mod platform {
     };
     use std::time::{Duration, Instant};
 
-    const HELPER_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+    const CAPTURE_ENGINE_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
     const START_TIMEOUT: Duration = Duration::from_secs(5);
     const STOP_TIMEOUT: Duration = Duration::from_secs(20);
     const STOP_POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -205,7 +205,7 @@ mod platform {
     }
 
     static CHILD: OnceLock<Mutex<Option<RecordingProcess>>> = OnceLock::new();
-    const HELPER_NAME: &str = "wrec-helper";
+    const CAPTURE_ENGINE_NAME: &str = "capture-engine";
 
     pub fn screen_recording_permission_status() -> Result<ScreenRecordingPermissionStatus> {
         run_permission_command("--permission-status")
@@ -216,7 +216,7 @@ mod platform {
     }
 
     pub fn list_targets() -> Result<Vec<CaptureTarget>> {
-        let output = run_helper_command(&["--list"], "target listing")?;
+        let output = run_capture_engine_command(&["--list"], "target listing")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -263,17 +263,17 @@ mod platform {
         std::fs::create_dir_all(&settings.output_dir)
             .map_err(|err| RecorderError::Backend(err.to_string()))?;
 
-        let helper = helper_path()?;
+        let capture_engine = capture_engine_path()?;
         let child_slot = CHILD.get_or_init(|| Mutex::new(None));
         let mut active_child = child_slot.lock().unwrap();
         if active_child.is_some() {
             return Err(RecorderError::Backend("recording is already active".into()));
         }
 
-        // Temporary v0 native bridge: run a compiled Swift helper that uses
+        // Temporary v0 native bridge: run a compiled Swift capture engine that uses
         // ScreenCaptureKit + AVAssetWriter. The frame path stays inside
         // Apple's native stack; Rust never receives/copies pixels.
-        let mut child = Command::new(helper)
+        let mut child = Command::new(capture_engine)
             .arg(&output_path)
             .arg(settings.fps.as_u32().to_string())
             .arg(if settings.include_cursor {
@@ -299,7 +299,9 @@ mod platform {
             .stdout(Stdio::inherit())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|err| RecorderError::Backend(format!("failed to start helper: {err}")))?;
+            .map_err(|err| {
+                RecorderError::Backend(format!("failed to start capture engine: {err}"))
+            })?;
 
         let metrics_running = Arc::new(AtomicBool::new(true));
         let metrics_events = events.clone();
@@ -317,12 +319,12 @@ mod platform {
         let Some(stderr) = stderr else {
             let _ = kill_active_child();
             return Err(RecorderError::Backend(
-                "helper stderr was not available for startup handshake".into(),
+                "capture engine stderr was not available for startup handshake".into(),
             ));
         };
 
         std::thread::spawn(move || {
-            forward_helper_stderr(session_id, stderr, events, Some(startup_tx));
+            forward_capture_engine_stderr(session_id, stderr, events, Some(startup_tx));
         });
 
         match startup_rx.recv_timeout(START_TIMEOUT) {
@@ -330,21 +332,21 @@ mod platform {
             Ok(StartupSignal::Failed(message)) => {
                 let _ = std::fs::remove_file(&output_path);
                 return Err(RecorderError::Backend(format!(
-                    "recording helper failed to start: {message}"
+                    "capture engine failed to start recording: {message}"
                 )));
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 let status = kill_active_child();
                 let _ = std::fs::remove_file(&output_path);
                 return Err(RecorderError::Backend(format!(
-                    "recording helper did not report start within {}s{status}",
+                    "capture engine did not report start within {}s{status}",
                     START_TIMEOUT.as_secs()
                 )));
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 let _ = std::fs::remove_file(&output_path);
                 return Err(RecorderError::Backend(
-                    "recording helper startup channel closed before recording started".into(),
+                    "capture engine startup channel closed before recording started".into(),
                 ));
             }
         }
@@ -356,7 +358,7 @@ mod platform {
             metrics_events,
         );
 
-        tracing::info!(?target, ?settings, ?output_path, "started recording helper");
+        tracing::info!(?target, ?settings, ?output_path, "started capture engine");
         Ok(RecordingSession {
             id: session_id,
             output_path,
@@ -381,7 +383,7 @@ mod platform {
                 Ok(stopped) => stopped,
                 Err(err) => {
                     process.metrics_running.store(false, Ordering::Relaxed);
-                    let message = format!("failed polling helper: {err}");
+                    let message = format!("failed polling capture engine: {err}");
                     emit_failed(&process.events, Some(process.session_id), message.clone());
                     return Err(RecorderError::Backend(message));
                 }
@@ -397,7 +399,7 @@ mod platform {
                     Ok(status) => status,
                     Err(err) => {
                         process.metrics_running.store(false, Ordering::Relaxed);
-                        let message = format!("failed killing stuck helper: {err}");
+                        let message = format!("failed killing stuck capture engine: {err}");
                         emit_failed(&process.events, Some(process.session_id), message.clone());
                         return Err(RecorderError::Backend(message));
                     }
@@ -405,7 +407,7 @@ mod platform {
                 process.metrics_running.store(false, Ordering::Relaxed);
                 emit_exited(&process.events, process.session_id, &status);
                 return Err(RecorderError::Backend(format!(
-                    "recording helper did not stop within {}s and was killed with {status}",
+                    "capture engine did not stop recording within {}s and was killed with {status}",
                     STOP_TIMEOUT.as_secs()
                 )));
             }
@@ -416,7 +418,7 @@ mod platform {
         emit_exited(&process.events, process.session_id, &status);
         if !status.success() {
             return Err(RecorderError::Backend(format!(
-                "recording helper exited with {status}"
+                "capture engine exited with {status}"
             )));
         }
         Ok(())
@@ -440,7 +442,7 @@ mod platform {
         };
         let Some(stdin) = process.child.stdin.as_mut() else {
             return Err(RecorderError::Backend(
-                "recording helper stdin is unavailable".into(),
+                "capture engine stdin is unavailable".into(),
             ));
         };
 
@@ -449,7 +451,7 @@ mod platform {
             .map_err(|err| RecorderError::Backend(format!("failed to send {command}: {err}")))
     }
 
-    fn forward_helper_stderr(
+    fn forward_capture_engine_stderr(
         session_id: u64,
         stderr: std::process::ChildStderr,
         events: Option<std::sync::mpsc::Sender<RecorderEvent>>,
@@ -464,8 +466,8 @@ mod platform {
             .map_while(std::result::Result::ok)
         {
             eprintln!("{line}");
-            let is_recording_started = helper_line_is_recording_started(&line);
-            let is_failure = helper_line_is_failure(&line);
+            let is_recording_started = capture_engine_line_is_recording_started(&line);
+            let is_failure = capture_engine_line_is_failure(&line);
 
             if is_failure && first_startup_failure.is_none() {
                 first_startup_failure = Some(line.clone());
@@ -495,7 +497,7 @@ mod platform {
         let Ok(mut child) = child_slot.lock() else {
             signal_startup(
                 &mut startup,
-                StartupSignal::Failed("failed to inspect helper exit status".into()),
+                StartupSignal::Failed("failed to inspect capture engine exit status".into()),
             );
             return;
         };
@@ -514,7 +516,9 @@ mod platform {
             if !did_start {
                 signal_startup(
                     &mut startup,
-                    StartupSignal::Failed("helper stderr closed before recording started".into()),
+                    StartupSignal::Failed(
+                        "capture engine stderr closed before recording started".into(),
+                    ),
                 );
             }
             return;
@@ -525,7 +529,7 @@ mod platform {
             signal_startup(
                 &mut startup,
                 StartupSignal::Failed(first_startup_failure.unwrap_or_else(|| {
-                    format!("helper exited before recording started: {status}")
+                    format!("capture engine exited before recording started: {status}")
                 })),
             );
             return;
@@ -549,8 +553,8 @@ mod platform {
         process.metrics_running.store(false, Ordering::Relaxed);
         let _ = process.child.kill();
         match process.child.wait() {
-            Ok(status) => format!("; killed helper with {status}"),
-            Err(err) => format!("; failed to wait for killed helper: {err}"),
+            Ok(status) => format!("; killed capture engine with {status}"),
+            Err(err) => format!("; failed to wait for killed capture engine: {err}"),
         }
     }
 
@@ -625,9 +629,9 @@ mod platform {
         });
     }
 
-    fn helper_line_is_failure(line: &str) -> bool {
+    fn capture_engine_line_is_failure(line: &str) -> bool {
         line.contains("recording failed")
-            || line.contains("wrec-helper: error:")
+            || line.contains("capture-engine: error:")
             || line.contains("permission")
             || line.contains("timed out")
             || line.contains("not found")
@@ -636,8 +640,8 @@ mod platform {
             || line.contains("CGS_REQUIRE_INIT")
     }
 
-    fn helper_line_is_recording_started(line: &str) -> bool {
-        line.contains("wrec-helper: recording started")
+    fn capture_engine_line_is_recording_started(line: &str) -> bool {
+        line.contains("capture-engine: recording started")
     }
 
     fn is_permission_error(message: &str) -> bool {
@@ -645,7 +649,7 @@ mod platform {
     }
 
     fn run_permission_command(arg: &str) -> Result<ScreenRecordingPermissionStatus> {
-        let output = run_helper_command(&[arg], "screen recording permission check")?;
+        let output = run_capture_engine_command(&[arg], "screen recording permission check")?;
 
         if !output.status.success() {
             return Err(RecorderError::Backend(format!(
@@ -663,8 +667,8 @@ mod platform {
         }
     }
 
-    fn run_helper_command(args: &[&str], label: &str) -> Result<Output> {
-        let mut child = Command::new(helper_path()?)
+    fn run_capture_engine_command(args: &[&str], label: &str) -> Result<Output> {
+        let mut child = Command::new(capture_engine_path()?)
             .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -677,57 +681,59 @@ mod platform {
                 Ok(Some(_)) => {
                     return child.wait_with_output().map_err(|err| {
                         RecorderError::Backend(format!(
-                            "{label} failed to read helper output: {err}"
+                            "{label} failed to read capture engine output: {err}"
                         ))
                     });
                 }
-                Ok(None) if started_at.elapsed() >= HELPER_COMMAND_TIMEOUT => {
+                Ok(None) if started_at.elapsed() >= CAPTURE_ENGINE_COMMAND_TIMEOUT => {
                     let _ = child.kill();
                     let _ = child.wait();
                     return Err(RecorderError::Backend(format!(
-                        "{label} timed out after {}s; killed helper. Run `wrec targets --json` again, and if this repeats, restart Wrec/Terminal and verify Screen Recording permission.",
-                        HELPER_COMMAND_TIMEOUT.as_secs()
+                        "{label} timed out after {}s; killed capture engine. Run `wrec targets --json` again, and if this repeats, restart Wrec/Terminal and verify Screen Recording permission.",
+                        CAPTURE_ENGINE_COMMAND_TIMEOUT.as_secs()
                     )));
                 }
                 Ok(None) => std::thread::sleep(STOP_POLL_INTERVAL),
                 Err(err) => {
                     return Err(RecorderError::Backend(format!(
-                        "{label} failed while waiting for helper: {err}"
+                        "{label} failed while waiting for capture engine: {err}"
                     )));
                 }
             }
         }
     }
 
-    fn helper_path() -> Result<PathBuf> {
-        std::env::var_os("WREC_HELPER_PATH")
+    fn capture_engine_path() -> Result<PathBuf> {
+        std::env::var_os("WREC_CAPTURE_ENGINE_PATH")
+            .or_else(|| std::env::var_os("WREC_HELPER_PATH"))
             .map(PathBuf::from)
             .filter(|path| path.is_file())
-            .or_else(packaged_helper_path)
-            .or_else(cargo_helper_path)
+            .or_else(packaged_capture_engine_path)
+            .or_else(cargo_capture_engine_path)
             .ok_or_else(|| {
                 RecorderError::Backend(format!(
-                    "{HELPER_NAME} was not found next to the app executable or in Cargo build output"
+                    "{CAPTURE_ENGINE_NAME} was not found next to the app executable or in Cargo build output"
                 ))
             })
     }
 
-    fn packaged_helper_path() -> Option<PathBuf> {
+    fn packaged_capture_engine_path() -> Option<PathBuf> {
         std::env::current_exe()
             .ok()
             .as_deref()
-            .and_then(sibling_helper_path)
+            .and_then(sibling_capture_engine_path)
     }
 
-    fn sibling_helper_path(exe_path: &Path) -> Option<PathBuf> {
+    fn sibling_capture_engine_path(exe_path: &Path) -> Option<PathBuf> {
         exe_path
             .parent()
-            .map(|dir| dir.join(HELPER_NAME))
+            .map(|dir| dir.join(CAPTURE_ENGINE_NAME))
             .filter(|path| path.is_file())
     }
 
-    fn cargo_helper_path() -> Option<PathBuf> {
-        option_env!("WREC_HELPER_PATH")
+    fn cargo_capture_engine_path() -> Option<PathBuf> {
+        option_env!("WREC_CAPTURE_ENGINE_PATH")
+            .or(option_env!("WREC_HELPER_PATH"))
             .map(PathBuf::from)
             .filter(|path| path.is_file())
     }
@@ -737,27 +743,31 @@ mod platform {
         use super::*;
 
         #[test]
-        fn sibling_helper_path_finds_packaged_helper() {
-            let dir = std::env::temp_dir().join(format!("wrec-helper-test-{}", std::process::id()));
+        fn sibling_capture_engine_path_finds_packaged_capture_engine() {
+            let dir =
+                std::env::temp_dir().join(format!("capture-engine-test-{}", std::process::id()));
             let exe = dir.join("wrec");
-            let helper = dir.join(HELPER_NAME);
+            let capture_engine = dir.join(CAPTURE_ENGINE_NAME);
 
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(&exe, "").unwrap();
-            std::fs::write(&helper, "").unwrap();
+            std::fs::write(&capture_engine, "").unwrap();
 
-            assert_eq!(sibling_helper_path(&exe), Some(helper.clone()));
+            assert_eq!(
+                sibling_capture_engine_path(&exe),
+                Some(capture_engine.clone())
+            );
 
             let _ = std::fs::remove_file(exe);
-            let _ = std::fs::remove_file(helper);
+            let _ = std::fs::remove_file(capture_engine);
             let _ = std::fs::remove_dir(dir);
         }
 
         #[test]
-        fn sibling_helper_path_ignores_missing_helper() {
-            let exe = PathBuf::from("/tmp/wrec-missing-helper/wrec");
+        fn sibling_capture_engine_path_ignores_missing_capture_engine() {
+            let exe = PathBuf::from("/tmp/wrec-missing-capture-engine/wrec");
 
-            assert_eq!(sibling_helper_path(&exe), None);
+            assert_eq!(sibling_capture_engine_path(&exe), None);
         }
     }
 }
