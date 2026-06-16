@@ -996,15 +996,17 @@ fn sidebar_nav_item(
 }
 
 fn sidebar_nav_row(item: WrecSidebarNavItem, cx: &mut Context<WrecApp>) -> impl IntoElement {
+    // Translucent white pill highlights so the selected/hovered nav item reads
+    // as frosted glass over the blurred backdrop.
     let active_bg = if cx.theme().mode.is_dark() {
-        Hsla::from(rgb(0x343434))
+        hsla(0., 0., 1., 0.14)
     } else {
-        Hsla::from(rgb(0xe4e4e4))
+        hsla(0., 0., 1., 0.65)
     };
     let hover_bg = if cx.theme().mode.is_dark() {
-        Hsla::from(rgb(0x2d2d2d))
+        hsla(0., 0., 1., 0.07)
     } else {
-        Hsla::from(rgb(0xeeeeee))
+        hsla(0., 0., 1., 0.40)
     };
     let color = if item.active {
         cx.theme().sidebar_accent_foreground
@@ -1376,6 +1378,61 @@ fn apply_wrec_theme(cx: &mut App) {
     theme.link = theme.primary;
     theme.link_hover = theme.primary_hover;
     theme.link_active = theme.primary_active;
+
+    apply_liquid_glass(theme, palette, &color);
+}
+
+/// Liquid-glass pass.
+///
+/// The window is opened with `WindowBackgroundAppearance::Blurred`, so the macOS
+/// backdrop blur sits behind the entire app. Lowering the alpha of the surface
+/// tokens lets that blur read through as frosted "liquid glass", while a bright
+/// translucent edge gives panels and controls the glassy rim highlight. This
+/// runs last so it overrides the solid surface colors assigned above — tweak the
+/// alpha values here to taste, or delete this call to revert to flat surfaces.
+fn apply_liquid_glass(
+    theme: &mut Theme,
+    palette: ThemePalette,
+    color: &impl Fn(u32) -> Hsla,
+) {
+    let dark = theme.mode.is_dark();
+    let surface = |hex: u32, alpha: f32| color(hex).opacity(alpha);
+
+    // Translucent surfaces — the lower the alpha, the more backdrop shows through.
+    theme.background = surface(palette.background, if dark { 0.62 } else { 0.68 });
+    theme.sidebar = surface(palette.sidebar, if dark { 0.45 } else { 0.50 });
+    theme.group_box = surface(palette.card, if dark { 0.55 } else { 0.60 });
+    theme.tiles = theme.group_box;
+    theme.table = theme.group_box;
+    theme.table_even = theme.group_box;
+    theme.accent = surface(palette.accent, if dark { 0.65 } else { 0.70 });
+    theme.muted = surface(palette.muted, if dark { 0.55 } else { 0.60 });
+    theme.secondary = surface(palette.secondary, if dark { 0.70 } else { 0.75 });
+    theme.input = surface(palette.input, if dark { 0.45 } else { 0.55 });
+    theme.switch = theme.muted;
+
+    // Floating menus overlay app content (not just the desktop), so keep them
+    // mostly opaque to stay readable.
+    theme.popover = surface(palette.popover, if dark { 0.92 } else { 0.94 });
+    theme.colors.list = theme.popover;
+    theme.list_even = theme.popover;
+
+    // Bright translucent edge = the glass rim highlight.
+    let edge = hsla(0., 0., 1., if dark { 0.12 } else { 0.55 });
+    theme.border = edge;
+    theme.sidebar_border = edge;
+    theme.title_bar_border = edge;
+    theme.list_active_border = edge;
+    theme.table_active_border = edge;
+    theme.table_row_border = edge;
+
+    // Chrome bars inherit the frosted background.
+    theme.title_bar = theme.background;
+    theme.tab_bar = theme.background;
+
+    // Softer, more "squircle" corners read as glass.
+    theme.radius = px(10.);
+    theme.radius_lg = px(14.);
 }
 
 pub(crate) fn target_key(target: &CaptureTarget) -> String {
