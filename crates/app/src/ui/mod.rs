@@ -479,7 +479,6 @@ impl WrecApp {
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .child(section_label("Capture", muted_foreground))
                     .child(source_row)
                     .child(target_row),
             )
@@ -488,7 +487,6 @@ impl WrecApp {
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .child(section_label("Output", muted_foreground))
                     .child(format_row)
                     .child(resolution_row)
                     .child(quality_row)
@@ -1202,13 +1200,6 @@ fn field_label(label: &'static str, color: Hsla) -> Div {
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(color),
     )
-}
-
-fn section_label(label: &'static str, _color: Hsla) -> Div {
-    div()
-        .text_lg()
-        .font_weight(FontWeight::BOLD)
-        .child(label)
 }
 
 fn row_label(label: &'static str) -> Div {
