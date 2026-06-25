@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to package, without the dev artifact suffix"
+        required: true
+        default: "0.1.0"
 
 permissions:
   contents: write
@@ -24,21 +30,34 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify release tag is on main
-        id: tag
+      - name: Prepare release metadata
+        id: release
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
 
           git fetch origin main --prune
-          tag_commit="$(git rev-list -n 1 "$GITHUB_REF_NAME")"
 
-          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
-            echo "::error::Tag $GITHUB_REF_NAME points to $tag_commit, which is not on origin/main."
-            exit 1
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            commit="$(git rev-list -n 1 "$GITHUB_REF_NAME")"
+            version="${GITHUB_REF_NAME#v}"
+
+            if ! git merge-base --is-ancestor "$commit" origin/main; then
+              echo "::error::Tag $GITHUB_REF_NAME points to $commit, which is not on origin/main."
+              exit 1
+            fi
+          else
+            commit="$(git rev-parse HEAD)"
+            version="${INPUT_VERSION#v}"
+
+            if ! git merge-base --is-ancestor "$commit" origin/main; then
+              echo "::error::Manual release rehearsal must run from a commit on origin/main."
+              exit 1
+            fi
           fi
 
-          version="${GITHUB_REF_NAME#v}"
-          echo "commit=$tag_commit" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust
@@ -62,6 +81,16 @@ jobs:
           swiftc --version
           xcodebuild -version
 
+      - name: Prepare Xcode Metal toolchain
+        run: |
+          set -euo pipefail
+
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          if ! xcrun -f metal >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          xcrun -f metal
+
       - name: Check
         run: |
           cargo fmt --check
@@ -70,7 +99,7 @@ jobs:
 
       - name: Package unsigned dev DMG
         env:
-          VERSION: ${{ steps.tag.outputs.version }}
+          VERSION: ${{ steps.release.outputs.version }}
           ARTIFACT_QUALIFIER: dev
         run: ./scripts/package-macos.sh release
 
@@ -89,7 +118,7 @@ jobs:
             *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
           esac
 
-          dmg="dist/release/wrec-${{ steps.tag.outputs.version }}-dev.dmg"
+          dmg="dist/release/wrec-${{ steps.release.outputs.version }}-dev.dmg"
           cli_archive="dist/cli/wrec-cli-$target-dev.tar.gz"
 
           test -f "$dmg"
@@ -100,11 +129,14 @@ jobs:
           tar -tzf "$cli_archive" | grep -qx 'wrec-cli/capture-engine'
 
           mount_dir="$(mktemp -d)"
+          trap 'hdiutil detach "$mount_dir" >/dev/null 2>&1 || true; rmdir "$mount_dir" >/dev/null 2>&1 || true' EXIT
           hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount_dir"
           codesign --verify --deep --strict --verbose=2 "$mount_dir/Wrec.app"
           hdiutil detach "$mount_dir"
+          rmdir "$mount_dir"
 
       - name: Publish GitHub Release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -113,7 +145,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             dist/release/*.dmg \
             dist/cli/*.tar.gz \
-            --target "${{ steps.tag.outputs.commit }}" \
+            --target "${{ steps.release.outputs.commit }}" \
             --title "$GITHUB_REF_NAME" \
             --notes "Unsigned macOS dev build for $GITHUB_REF_NAME. macOS will show an unsigned-app warning." \
             --verify-tag
