@@ -14,9 +14,7 @@
   &nbsp;·&nbsp;
   <a href="#install">Install</a>
   &nbsp;·&nbsp;
-  <a href="#cli">CLI</a>
-  &nbsp;·&nbsp;
-  <a href="#architecture">Architecture</a>
+  <a href="https://wrec-beta.vercel.app/docs">Docs</a>
 </p>
 
 ---
@@ -41,6 +39,13 @@ JSON-friendly CLI for scripts and agents.
 - Pause, resume, stop, queued jobs, and recording status.
 - JSON output for target discovery, job control, errors, metrics, and logs.
 - Local recording history and metrics stored separately from media files.
+
+## Documentation
+
+The full CLI reference, the agent automation contract, and the runtime
+architecture live in the docs:
+
+**[wrec-beta.vercel.app/docs](https://wrec-beta.vercel.app/docs)**
 
 ## Install
 
@@ -94,45 +99,6 @@ cargo run -p cli -- targets --json
 cargo run -p cli -- record start --target display:1 --duration 30s
 ```
 
-## CLI
-
-The CLI is built for automation. Use `--json` whenever a command supports it,
-discover targets before recording, and treat target ids as temporary for the
-current target list.
-
-```bash
-wrec targets --json
-wrec record start --target display:1 --duration 30s --json
-wrec record start --app Safari --duration 5m --json
-wrec record start --target window:438 --detach --json
-wrec jobs --json
-wrec job show <job-id> --json
-wrec job pause <job-id> --json
-wrec job resume <job-id> --json
-wrec job stop <job-id> --json
-wrec daemon status --json
-```
-
-Useful per-run overrides:
-
-```bash
-wrec record start \
-  --target display:1 \
-  --quality high \
-  --resolution native \
-  --fps 60 \
-  --codec hevc \
-  --out ~/Movies/Wrec \
-  --cursor \
-  --system-audio \
-  --hide-wrec \
-  --json
-```
-
-Extra recording requests queue behind the active job by default. Pass
-`--no-queue` to fail when another recording is active, or `--detach` to submit
-the job and return immediately.
-
 ## Runtime Paths
 
 App config and SQLite data:
@@ -156,69 +122,6 @@ Daemon files for local automation:
 ```
 
 Set `WREC_HOME` to override the daemon directory for tests or isolated agents.
-
-## Architecture
-
-```text
-                  +----------------+
-                  |     core       |
-                  | domain types   |
-                  +--------+-------+
-                           |
-        +------------------+------------------+
-        |                                     |
-+-------v------+                      +-------v------+
-|   wrec-app   |                      |   wrec CLI   |
-| GPUI client  |                      | terminal UX  |
-+-------+------+                      +------+-------+
-        |                                    |
-        +---------------+--------------------+
-                        |
-                  +-----v------+
-                  |  control   |
-                  | IPC client |
-                  | protocol   |
-                  +-----+------+
-                        |
-                  Unix socket
-                        |
-                  +-----v------+
-                  |   daemon   |
-                  | queue/jobs |
-                  | settings   |
-                  | store I/O  |
-                  +-----+------+
-                        |
-                  +-----v------+
-                  |   macos    |
-                  | recorder   |
-                  +-----+------+
-                        |
-                  +-----v----------+
-                  | capture-engine |
-                  | SCK + writer   |
-                  +-----+----------+
-                        |
-        ScreenCaptureKit -> AVAssetWriter -> .mov
-```
-
-- `crates/app` owns the GPUI window, controls, notifications, and app state.
-- `crates/cli` owns the terminal UX and JSON command surface.
-- `crates/core` defines shared recorder types, settings, targets, sessions, and
-  metrics.
-- `crates/control` defines the IPC protocol, daemon client, daemon discovery,
-  and daemon startup.
-- `crates/daemon` owns local IPC, one active recording job, queued jobs, and
-  persisted recording state.
-- `crates/macos` supervises the native capture engine and translates capture
-  output into recorder events.
-- `crates/store` writes recording history, events, and metrics to SQLite.
-- `crates/macos/native/capture_engine.swift` owns ScreenCaptureKit capture and
-  AVAssetWriter encode/finalization.
-
-The app and CLI stay thin. They do not import the macOS recorder, store, or
-capture-engine code directly. The daemon is the source of truth for recording
-state.
 
 ## Development
 
