@@ -10,11 +10,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/shivamhwp/wrec/releases">Download</a>
+  <a href="https://github.com/shivamhwp/wrec/releases" target="_blank" rel="noopener noreferrer">Download</a>
   &nbsp;·&nbsp;
   <a href="#install">Install</a>
   &nbsp;·&nbsp;
-  <a href="https://wrec-beta.vercel.app/docs">Docs</a>
+  <a href="https://wrec-beta.vercel.app/docs" target="_blank" rel="noopener noreferrer">Docs</a>
 </p>
 
 ---
@@ -45,12 +45,12 @@ JSON-friendly CLI for scripts and agents.
 The full CLI reference, the agent automation contract, and the runtime
 architecture live in the docs:
 
-**[wrec-beta.vercel.app/docs](https://wrec-beta.vercel.app/docs)**
+<a href="https://wrec-beta.vercel.app/docs" target="_blank" rel="noopener noreferrer"><strong>wrec-beta.vercel.app/docs</strong></a>
 
 ## Install
 
 Download the latest macOS app from
-[GitHub Releases](https://github.com/shivamhwp/wrec/releases).
+<a href="https://github.com/shivamhwp/wrec/releases" target="_blank" rel="noopener noreferrer">GitHub Releases</a>.
 
 The standalone CLI can be installed with:
 
@@ -66,38 +66,8 @@ under `/usr/local/lib/wrec`, and places a managed wrapper at
 
 - macOS 15+.
 - Apple Silicon is the primary target.
-- Full Xcode selected with `xcode-select`.
 - Screen Recording permission for the app or terminal.
 - Audio Recording permission when system audio capture is enabled.
-
-If GPUI shader compilation fails during development, select full Xcode:
-
-```bash
-sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-```
-
-If `metal` still reports a missing Metal toolchain:
-
-```bash
-xcodebuild -downloadComponent MetalToolchain
-```
-
-## Run From Source
-
-During Cargo development, the app and CLI can auto-start the daemon. Building it
-once first makes startup a little faster:
-
-```bash
-cargo build -p daemon --bin daemon
-cargo run -p app
-```
-
-Run the CLI from source:
-
-```bash
-cargo run -p cli -- targets --json
-cargo run -p cli -- record start --target display:1 --duration 30s
-```
 
 ## Runtime Paths
 
@@ -123,65 +93,11 @@ Daemon files for local automation:
 
 Set `WREC_HOME` to override the daemon directory for tests or isolated agents.
 
-## Development
-
-Run checks before sending changes:
-
-```bash
-cargo fmt
-cargo check
-cargo test
-```
-
-The marketing site and benchmark helpers use Bun:
-
-```bash
-cd marketing
-bun install
-bun run format
-bun run check
-```
-
-Do not use npm, pnpm, yarn, or npx here.
-
-Local recording-path benchmarks live in `benchmarks/`:
-
-```bash
-cd benchmarks
-bun run bench -- --duration 8s
-open index.html
-```
-
-## Packaging
-
-Create a local dev app:
-
-```bash
-./scripts/package-macos.sh
-```
-
-This creates `dist/dev/Wrec Dev.app`, uses the dev Cargo profile, signs the app
-ad-hoc, and writes `dist/dev/README.md` with the local build details.
-
-Create release artifacts:
-
-```bash
-./scripts/package-macos.sh release
-./scripts/package-cli-macos.sh release
-```
-
-The app package contains `wrec-app`, `daemon`, and `capture-engine`. The CLI
-package contains `wrec`, `daemon`, and `capture-engine`, so it can run without
-copying anything out of the app bundle.
-
-Pushing a `v*` tag whose commit is on `main` runs the release workflow and
-uploads the `.dmg` and CLI archive to GitHub Releases.
-
 ## Contributing
 
-Wrec's north star is recording efficiency: low memory footprint, low CPU usage,
-and clear controls for people and agents. Prefer obvious designs, keep the media
-path native, and measure changes that could affect capture overhead.
+Building from source, development checks, and packaging live in
+[CONTRIBUTING.md](CONTRIBUTING.md). Wrec's north star is recording efficiency:
+low memory footprint, low CPU usage, and clear controls for people and agents.
 
 ## License
 
