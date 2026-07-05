@@ -1,0 +1,10 @@
+* text=auto eol=lf
+*.rs text diff=rust
+*.toml text
+*.json text
+*.md text
+*.sh text eol=lf
+*.ps1 text eol=crlf
+Cargo.lock text
+.gitignore text
+.gitattributes text
