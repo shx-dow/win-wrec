@@ -9,7 +9,6 @@ rust-version.workspace = true
 control = { path = "../control" }
 backend = { path = "../backend" }
 domain = { package = "core", path = "../core" }
-macos = { path = "../macos" }
 windows-recorder = { path = "../windows" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"

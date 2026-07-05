@@ -11,107 +11,50 @@
 </p>
 
 <p align="center">
-  the most efficient screen recorder for mac.
+  Windows fork of <a href="https://github.com/shivamhwp/wrec">shivamhwp/wrec</a> — the most efficient screen recorder.
 </p>
 
 <p align="center">
-  <a href="https://github.com/shivamhwp/wrec/releases" target="_blank" rel="noopener noreferrer">Download</a>
-  &nbsp;·&nbsp;
-  <a href="https://wrec-beta.vercel.app/docs" target="_blank" rel="noopener noreferrer">Docs</a>
-  &nbsp;·&nbsp;
-  <a href="https://wrec-beta.vercel.app/docs" target="_blank" rel="noopener noreferrer">For your agents</a>
-  &nbsp;·&nbsp;
-  <a href="CONTRIBUTING.md">Contributing</a>
-  &nbsp;·&nbsp;
-  <a href="https://wrec-beta.vercel.app/docs" target="_blank" rel="noopener noreferrer">CLI</a>
+  ⚠️ <b>WIP</b> — DXGI capture, WASAPI audio, MF encoding. CLI works, GUI coming later.
 </p>
 
-Wrec records displays or windows with a native ScreenCaptureKit pipeline, writes
-hardware-encoded `.mov` files, and gives you both a small GPUI app and a
-JSON-friendly CLI for scripts and agents.
+<p align="center">
+  <a href="https://github.com/shivamhwp/wrec" target="_blank" rel="noopener noreferrer">Original wrec</a>
+  &nbsp;·&nbsp;
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
 
-> [!NOTE]
-> Wrec is still early public software. Release builds are not notarized, so
-> macOS blocks the first launch of the app. Clear the quarantine recursively
-> (the nested helpers are quarantined separately) and reopen:
-> ```bash
-> xattr -dr com.apple.quarantine /Applications/Wrec.app
-> ```
-> The CLI (installer below or `brew install shivamhwp/tap/wrec-cli`) is not
-> affected by the warning.
+Windows-native rewrite using DXGI output duplication, WASAPI loopback capture,
+and Media Foundation H.264/HEVC encoding. No external dependencies — pure Rust
+and Win32 APIs via the `windows` crate.
 
-## Features
+## Build
 
-- Native macOS app built with Rust and GPUI.
-- Standalone `wrec` CLI for terminals, scripts, and coding agents.
-- Display and window capture.
-- HEVC by default, with H.264 available.
-- 30 FPS and 60 FPS recording.
-- Resolution controls for 720p, 1080p, 2K, 4K, and native capture.
-- Cursor capture, system audio capture, and Wrec-window hiding toggles.
-- Pause, resume, stop, queued jobs, and recording status.
-- JSON output for target discovery, job control, errors, metrics, and logs.
-- Local recording history and metrics stored separately from media files.
-
-## Install
-
-Download the latest macOS app from
-<a href="https://github.com/shivamhwp/wrec/releases" target="_blank" rel="noopener noreferrer">GitHub Releases</a>.
-
-Both are also on Homebrew:
-
-```bash
-brew install shivamhwp/tap/wrec-cli     # CLI for terminals, scripts, agents
-brew install --cask shivamhwp/tap/wrec  # the app
+```powershell
+cargo build --bin wrec
 ```
 
-The standalone CLI can also be installed with:
+Requires Rust 1.78+ and the `x86_64-pc-windows-msvc` target (installed by default
+with rustup on Windows).
 
-```bash
-curl -fsSL https://wrec-beta.vercel.app/install | sh
+## Quick start
+
+```powershell
+# Start the daemon (background process)
+wrec daemon serve
+
+# List capture targets
+wrec targets --json
+
+# Record for 10 seconds
+wrec record --duration 10
+
+# Or record until Ctrl+C
+wrec record
 ```
 
-The CLI installer grabs the dev archive for your Mac, installs the runtime
-under `/usr/local/lib/wrec`, and places a managed wrapper at
-`/usr/local/bin/wrec`.
-
-## Requirements
-
-- macOS 15+.
-- Apple Silicon is the primary target.
-- Screen Recording permission for the app or terminal.
-- Audio Recording permission when system audio capture is enabled.
-
-## Runtime Paths
-
-App config and SQLite data:
-
-```text
-~/Library/Application Support/Wrec
-```
-
-Default recording output:
-
-```text
-~/Movies/<app name>
-```
-
-Daemon files for local automation:
-
-```text
-~/.wrec/wrec.sock
-~/.wrec/daemon.log
-~/.wrec/job-events.jsonl
-```
-
-Set `WREC_HOME` to override the daemon directory for tests or isolated agents.
-
-## Contributing
-
-Building from source, development checks, and packaging live in
-[CONTRIBUTING.md](CONTRIBUTING.md). Wrec's north star is recording efficiency:
-low memory footprint, low CPU usage, and clear controls for people and agents.
+Output is written to `~/Videos/Wrec/wrec-<unix-ts>.mp4`.
 
 ## License
 
-MIT
+MIT — same as the original [wrec](https://github.com/shivamhwp/wrec).

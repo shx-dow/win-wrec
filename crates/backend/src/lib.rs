@@ -467,23 +467,8 @@ pub fn capture_kind_arg(kind: CaptureSourceKind) -> &'static str {
     }
 }
 
-pub fn recorder_event_source(message: &str) -> EventSource {
-    if message.starts_with("capture-engine:") {
-        EventSource::CaptureEngine
-    } else {
-        EventSource::Backend
-    }
-}
-
-pub fn parse_capture_dimensions(message: &str) -> Option<CaptureDimensions> {
-    let (native_width, native_height) = parse_size_after(message, "native=")?;
-    let (output_width, output_height) = parse_size_after(message, "size=")?;
-    Some(CaptureDimensions {
-        native_width,
-        native_height,
-        output_width,
-        output_height,
-    })
+pub fn recorder_event_source(_message: &str) -> EventSource {
+    EventSource::Backend
 }
 
 fn parse_target_key(key: &str) -> Option<(CaptureSourceKind, u64)> {
@@ -580,19 +565,6 @@ mod tests {
             err,
             "no display with id 99. Run `wrec targets --json` and pass one of the listed `display` ids."
         );
-    }
-
-    #[test]
-    fn parses_capture_dimensions_from_capture_engine_log() {
-        let dimensions = parse_capture_dimensions(
-            "capture-engine: recording started native=3024x1964 size=1512x982",
-        )
-        .unwrap();
-
-        assert_eq!(dimensions.native_width, 3024);
-        assert_eq!(dimensions.native_height, 1964);
-        assert_eq!(dimensions.output_width, 1512);
-        assert_eq!(dimensions.output_height, 982);
     }
 
     #[test]

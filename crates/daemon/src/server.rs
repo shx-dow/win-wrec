@@ -4,12 +4,7 @@ use crate::{
     runtime::{self, RecordingRuntime},
 };
 
-#[cfg(target_os = "windows")]
 type PlatformRuntime = runtime::WindowsRuntime;
-#[cfg(target_os = "macos")]
-type PlatformRuntime = runtime::MacosRuntime;
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-type PlatformRuntime = runtime::MacosRuntime;
 use control::{
     daemon_addr, daemon_log_path, response_error, wrec_home, AgentError, IpcRequest, IpcResponse,
     StartRecordingParams,
