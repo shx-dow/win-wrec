@@ -6,16 +6,14 @@ output as high severity.
 
 ## Reporting
 
-Do not open a public issue for vulnerabilities. Report privately via
-[GitHub security advisories](https://github.com/shivamhwp/wrec/security/advisories/new)
-and include:
+Open a [GitHub issue](https://github.com/shivamhwp/wrec/issues/new) and
+include:
 
 - what the issue is and where (app, CLI, daemon, capture engine, installer)
 - steps to reproduce
 - the impact you believe it has
 
-You will get a response within a week. Please give us a chance to fix and
-release before disclosing publicly.
+You will get a response within a week.
 
 ## Scope notes
 
