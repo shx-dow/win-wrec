@@ -1,32 +1,31 @@
-use crate::{
-    paths::{daemon_log_path, now_ms, socket_path, wrec_home},
-    protocol::{
-        generic_daemon_error, AgentError, IpcRequest, IpcResponse, JobEvent, JobSnapshot,
-        JobStatus, StartRecordingParams,
-    },
-    PROTOCOL_VERSION,
+use crate::paths::{daemon_addr, now_ms};
+#[cfg(target_os = "macos")]
+use crate::paths::{daemon_log_path, wrec_home};
+use crate::protocol::{
+    generic_daemon_error, AgentError, IpcRequest, IpcResponse, JobEvent, JobSnapshot,
+    JobStatus, StartRecordingParams,
 };
+use crate::PROTOCOL_VERSION;
 use domain::{CaptureTarget, ScreenRecordingPermissionStatus};
 use serde_json::{json, Value};
 use std::{
     ffi::OsString,
-    fs::OpenOptions,
     io::{BufRead, BufReader, Write},
-    os::unix::{net::UnixStream, process::CommandExt},
+    net::TcpStream,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(3);
 #[cfg(debug_assertions)]
 const CARGO_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
-const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const WAIT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const IPC_READ_TIMEOUT: Duration = Duration::from_secs(10);
 const IPC_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
+#[allow(dead_code)]
 struct DaemonLaunch {
     program: PathBuf,
     args: Vec<OsString>,
@@ -72,11 +71,12 @@ impl DaemonClient {
     }
 
     pub fn send_request(&self, method: &str, params: Value) -> Result<IpcResponse, AgentError> {
-        let mut stream = UnixStream::connect(socket_path()).map_err(|err| AgentError {
+        let addr = daemon_addr();
+        let mut stream = TcpStream::connect(&addr).map_err(|err| AgentError {
             code: "daemon_unreachable".into(),
-            message: format!("Could not connect to {}: {err}", socket_path().display()),
+            message: format!("Could not connect to daemon at {addr}: {err}"),
             recoverable: true,
-            next: "Run `wrec daemon start` or retry a command that auto-starts the daemon.".into(),
+            next: "Run `wrec daemon serve` or ensure the daemon is running.".into(),
         })?;
         stream
             .set_write_timeout(Some(IPC_WRITE_TIMEOUT))
@@ -245,6 +245,33 @@ pub fn ensure_daemon() -> Result<(), AgentError> {
         return Ok(());
     }
 
+    #[cfg(target_os = "macos")]
+    {
+        ensure_daemon_macos(&client)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(AgentError {
+            code: "daemon_unreachable".into(),
+            message: "wrec daemon is not running. Start it with `wrec daemon serve`.".into(),
+            recoverable: true,
+            next: "Run `wrec daemon serve` in a terminal or set up the daemon as a service."
+                .into(),
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn ensure_daemon_macos(client: &DaemonClient) -> Result<(), AgentError> {
+    use std::{
+        fs::OpenOptions,
+        process::Stdio,
+        time::Instant,
+    };
+
+    const POLL_INTERVAL: Duration = Duration::from_millis(100);
+
     std::fs::create_dir_all(wrec_home()).map_err(|err| AgentError {
         code: "daemon_home_unavailable".into(),
         message: format!("Could not create {}: {err}", wrec_home().display()),
@@ -270,10 +297,13 @@ pub fn ensure_daemon() -> Result<(), AgentError> {
     })?;
     let launch = daemon_launch()?;
 
-    launch
-        .command()
-        .process_group(0)
-        .stdin(Stdio::null())
+    let mut cmd = launch.command();
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(stderr))
         .spawn()
@@ -297,11 +327,11 @@ pub fn ensure_daemon() -> Result<(), AgentError> {
         code: "daemon_unreachable".into(),
         message: format!(
             "wrec daemon did not become reachable at {} within {}s",
-            socket_path().display(),
+            daemon_addr(),
             launch.startup_timeout.as_secs()
         ),
         recoverable: true,
-        next: "Inspect ~/.wrec/daemon.log, then run `wrec daemon serve` manually if needed.".into(),
+        next: "Inspect ~/.wrec/daemon.log, then run `wrec daemon serve` manually if needed." .into(),
     })
 }
 
@@ -442,7 +472,7 @@ fn daemon_launch() -> Result<DaemonLaunch, AgentError> {
     })?;
 
     let candidates = daemon_candidates(&current);
-    let installed_daemon = PathBuf::from("/usr/local/lib/wrec/daemon");
+    let installed_daemon = default_daemon_path();
 
     if let Some(launch) = candidates
         .iter()
@@ -470,20 +500,33 @@ fn daemon_launch() -> Result<DaemonLaunch, AgentError> {
 
 fn daemon_candidates(current: &Path) -> Vec<PathBuf> {
     let Some(current_dir) = current.parent() else {
-        return vec![PathBuf::from("/usr/local/lib/wrec/daemon")];
+        return vec![default_daemon_path()];
     };
     let profile_dir = current_dir
         .parent()
         .filter(|_| current_dir.file_name().is_some_and(|name| name == "deps"));
+    let daemon_bin = if cfg!(windows) { "daemon.exe" } else { "daemon" };
 
     [
-        Some(current_dir.join("daemon")),
-        profile_dir.map(|dir| dir.join("daemon")),
-        Some(PathBuf::from("/usr/local/lib/wrec/daemon")),
+        Some(current_dir.join(daemon_bin)),
+        profile_dir.map(|dir| dir.join(daemon_bin)),
+        Some(default_daemon_path()),
     ]
     .into_iter()
     .flatten()
     .collect()
+}
+
+#[cfg(unix)]
+fn default_daemon_path() -> PathBuf {
+    PathBuf::from("/usr/local/lib/wrec/daemon")
+}
+
+#[cfg(windows)]
+fn default_daemon_path() -> PathBuf {
+    PathBuf::from(std::env::var("PROGRAMFILES").unwrap_or_else(|_| r"C:\Program Files".into()))
+        .join("Wrec")
+        .join("daemon.exe")
 }
 
 fn daemon_executable_launch(path: PathBuf) -> Option<DaemonLaunch> {
@@ -501,9 +544,14 @@ fn daemon_executable_launch(path: PathBuf) -> Option<DaemonLaunch> {
 }
 
 fn sibling_capture_engine_for_daemon(daemon: &Path) -> Option<PathBuf> {
+    let name = if cfg!(windows) {
+        "capture-engine.exe"
+    } else {
+        "capture-engine"
+    };
     daemon
         .parent()
-        .map(|dir| dir.join("capture-engine"))
+        .map(|dir| dir.join(name))
         .filter(|path| path.is_file())
 }
 

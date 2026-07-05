@@ -18,6 +18,10 @@ pub fn socket_path() -> PathBuf {
     wrec_home().join(SOCKET_NAME)
 }
 
+pub fn daemon_addr() -> String {
+    std::env::var("WREC_DAEMON_ADDR").unwrap_or_else(|_| "127.0.0.1:9842".to_string())
+}
+
 pub fn daemon_log_path() -> PathBuf {
     wrec_home().join(DAEMON_LOG_NAME)
 }
