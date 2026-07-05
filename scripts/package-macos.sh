@@ -126,8 +126,9 @@ usage() {
 Usage: $0 [dev|nightly|release]
 
 Defaults to dev. Dev builds use the debug Cargo profile, ad-hoc signing, and
-create "Wrec Dev.app". Release packaging uses --release and still creates a
-dev-labelled app by default.
+create "Wrec Dev.app". Release packaging uses --release and creates "Wrec.app"
+with bundle id app.wrec.mac. All builds are ad-hoc signed unless
+CODESIGN_IDENTITY is set.
 EOF
 }
 
@@ -147,11 +148,11 @@ case "$CHANNEL" in
     DEFAULT_ICON_SOURCE="$ROOT/images/wrec-dev.png"
     ;;
   release)
-    DEFAULT_APP_NAME="Wrec Dev"
-    DEFAULT_BUNDLE_ID="app.wrec.dev"
+    DEFAULT_APP_NAME="Wrec"
+    DEFAULT_BUNDLE_ID="app.wrec.mac"
     DEFAULT_PROFILE="release"
     DEFAULT_CREATE_DMG="1"
-    DEFAULT_ICON_SOURCE="$ROOT/images/wrec-dev.png"
+    DEFAULT_ICON_SOURCE="$ROOT/images/wrec-icon.png"
     ;;
   -h | --help | help)
     usage
@@ -180,7 +181,7 @@ MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 INFO_PLIST="$CONTENTS/Info.plist"
 ENTITLEMENTS="$ROOT/packaging/macos/entitlements.plist"
-VERSION="${VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/crates/app/Cargo.toml" | head -n 1)}"
+VERSION="${VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -n 1)}"
 GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo local)"
 BUILT_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 BUILT_BY="$(id -un 2>/dev/null || whoami 2>/dev/null || echo unknown)"
@@ -192,7 +193,7 @@ case "$CHANNEL" in
     ARTIFACT_QUALIFIER="${ARTIFACT_QUALIFIER:-dev-$GIT_SHA}"
     ;;
   release)
-    ARTIFACT_QUALIFIER="${ARTIFACT_QUALIFIER-dev}"
+    ARTIFACT_QUALIFIER="${ARTIFACT_QUALIFIER:-}"
     ;;
 esac
 

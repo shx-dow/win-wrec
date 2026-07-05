@@ -31,8 +31,10 @@ hardware-encoded `.mov` files, and gives you both a small GPUI app and a
 JSON-friendly CLI for scripts and agents.
 
 > [!NOTE]
-> Wrec is still early public software. The current GitHub dev artifacts are
-> unsigned dev builds, so macOS will show an unsigned-app warning.
+> Wrec is still early public software. Release builds are not notarized, so
+> macOS warns when opening the app from the DMG — use System Settings →
+> Privacy & Security → "Open Anyway" once. The CLI installer below is not
+> affected by the warning.
 
 ## Features
 
@@ -49,7 +51,7 @@ JSON-friendly CLI for scripts and agents.
 
 ## Install
 
-Download the latest dev macOS app from
+Download the latest macOS app from
 <a href="https://github.com/shivamhwp/wrec/releases" target="_blank" rel="noopener noreferrer">GitHub Releases</a>.
 
 The standalone CLI can be installed with:

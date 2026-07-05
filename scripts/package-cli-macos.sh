@@ -64,7 +64,7 @@ DIST_DIR="$ROOT/dist/cli"
 STAGE="$DIST_DIR/wrec-cli"
 TARGET="$(target_triple)"
 case "$CHANNEL" in
-  release) ARTIFACT_QUALIFIER="${ARTIFACT_QUALIFIER-dev}" ;;
+  release) ARTIFACT_QUALIFIER="${ARTIFACT_QUALIFIER:-}" ;;
   *) ARTIFACT_QUALIFIER="${ARTIFACT_QUALIFIER:-}" ;;
 esac
 ARCHIVE_SUFFIX=""

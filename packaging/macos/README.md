@@ -37,17 +37,18 @@ For release packaging:
 ./scripts/package-macos.sh release
 ```
 
-This creates `dist/release/Wrec Dev.app` with the release Cargo profile,
-bundle id `app.wrec.dev`, and a GitHub-facing dev DMG like
-`dist/release/wrec-0.1.0-dev.dmg` by default. Release packaging does not
-generate the companion README.
+This creates `dist/release/Wrec.app` with the release Cargo profile, bundle id
+`app.wrec.mac`, and a DMG like `dist/release/wrec-0.1.0.dmg`. Release
+packaging does not generate the companion README.
 
-Release packaging uses `images/wrec-dev.png` as the app icon because GitHub
-artifacts are dev-labelled.
+Release packaging uses `images/wrec-icon.png` as the app icon; dev packaging
+uses the DEV-badged `images/wrec-dev.png`.
 
-GitHub artifacts are unsigned dev builds. The app bundle is ad-hoc signed so
-the bundle is internally consistent, but macOS Gatekeeper will still warn users
-because there is no Developer ID signature or notarization.
+GitHub artifacts are ad-hoc signed so the bundle is internally consistent, but
+macOS Gatekeeper will still warn users on the app DMG because there is no
+Developer ID signature or notarization. The CLI installer and Homebrew formula
+are not affected by the warning. Homebrew packaging lives in
+`packaging/homebrew`.
 
 Set `ICON_SOURCE=/path/to/icon.png` to override the channel's default icon.
 
@@ -62,22 +63,22 @@ wrec-cli/
   capture-engine
 ```
 
-The resulting dev archive is written to
-`dist/cli/wrec-cli-<target>-dev.tar.gz`.
+The resulting archive is written to `dist/cli/wrec-cli-<target>.tar.gz`.
 `scripts/install-cli.sh` installs that runtime under `/usr/local/lib/wrec` and
 places a managed wrapper at `/usr/local/bin/wrec`.
 
 This package is intentionally separate from the app bundle. It carries the same
 daemon and capture-engine runtime so terminal users and agents can install
-`wrec` without copying files out of `Wrec Dev.app`.
+`wrec` without copying files out of the app bundle.
 
 ## GitHub release workflow
 
-`.github/workflows/release.yml` publishes macOS dev downloads when a `v*`
+`.github/workflows/release.yml` publishes macOS downloads when a `v*`
 tag is pushed and the tagged commit is on `origin/main`. GitHub Actions cannot
 filter tags by source branch in the trigger itself, so the workflow does an
 explicit ancestry check before packaging.
 
-The workflow uploads the unsigned dev `.dmg` and standalone dev CLI runtime
-archive as GitHub Release assets. It does not require Apple Developer Program
-secrets.
+The workflow uploads the unsigned `.dmg` and standalone CLI runtime archive as
+GitHub Release assets. It does not require Apple Developer Program secrets.
+After publishing, run `./scripts/update-homebrew.sh <version>` and sync the
+tap (see `packaging/homebrew/README.md`).

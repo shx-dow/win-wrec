@@ -88,10 +88,10 @@ debug Cargo profile. Release packaging is explicit:
 ./scripts/package-macos.sh release
 ```
 
-Release packaging creates a dev-labelled `dist/release/Wrec Dev.app` with the
-release Cargo profile and a `-dev.dmg`. Set `CODESIGN_IDENTITY` for Developer ID
-signing and `NOTARIZE=1` with App Store Connect credentials to submit and staple
-the `.dmg`.
+Release packaging creates `dist/release/Wrec.app` with the release Cargo
+profile and a `.dmg`. Builds are ad-hoc signed; we do not notarize. Set
+`CODESIGN_IDENTITY` for Developer ID signing and `NOTARIZE=1` with App Store
+Connect credentials if that ever changes.
 
 The standalone CLI runtime is packaged separately:
 

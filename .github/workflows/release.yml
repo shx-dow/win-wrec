@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to package, without the dev artifact suffix"
+        description: "Version to package"
         required: true
         default: "0.1.0"
 
@@ -97,18 +97,15 @@ jobs:
           cargo check
           cargo test
 
-      - name: Package unsigned dev DMG
+      - name: Package unsigned DMG
         env:
           VERSION: ${{ steps.release.outputs.version }}
-          ARTIFACT_QUALIFIER: dev
         run: ./scripts/package-macos.sh release
 
-      - name: Package dev CLI runtime
-        env:
-          ARTIFACT_QUALIFIER: dev
+      - name: Package CLI runtime
         run: ./scripts/package-cli-macos.sh release
 
-      - name: Verify dev artifacts
+      - name: Verify artifacts
         run: |
           set -euo pipefail
 
@@ -118,12 +115,12 @@ jobs:
             *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
           esac
 
-          dmg="dist/release/wrec-${{ steps.release.outputs.version }}-dev.dmg"
-          cli_archive="dist/cli/wrec-cli-$target-dev.tar.gz"
+          dmg="dist/release/wrec-${{ steps.release.outputs.version }}.dmg"
+          cli_archive="dist/cli/wrec-cli-$target.tar.gz"
 
           test -f "$dmg"
           test -f "$cli_archive"
-          codesign --verify --deep --strict --verbose=2 "dist/release/Wrec Dev.app"
+          codesign --verify --deep --strict --verbose=2 "dist/release/Wrec.app"
           tar -tzf "$cli_archive" | grep -qx 'wrec-cli/wrec'
           tar -tzf "$cli_archive" | grep -qx 'wrec-cli/daemon'
           tar -tzf "$cli_archive" | grep -qx 'wrec-cli/capture-engine'
@@ -131,10 +128,10 @@ jobs:
           mount_dir="$(mktemp -d)"
           trap 'hdiutil detach "$mount_dir" >/dev/null 2>&1 || true; rmdir "$mount_dir" >/dev/null 2>&1 || true' EXIT
           hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount_dir"
-          test -d "$mount_dir/Wrec Dev.app"
+          test -d "$mount_dir/Wrec.app"
           test -L "$mount_dir/Applications"
           test "$(readlink "$mount_dir/Applications")" = "/Applications"
-          codesign --verify --deep --strict --verbose=2 "$mount_dir/Wrec Dev.app"
+          codesign --verify --deep --strict --verbose=2 "$mount_dir/Wrec.app"
           hdiutil detach "$mount_dir"
           rmdir "$mount_dir"
 
@@ -150,6 +147,5 @@ jobs:
             dist/cli/*.tar.gz \
             --target "${{ steps.release.outputs.commit }}" \
             --title "$GITHUB_REF_NAME" \
-            --notes "Unsigned macOS dev build for $GITHUB_REF_NAME. macOS will show an unsigned-app warning." \
-            --prerelease \
+            --notes "macOS build for $GITHUB_REF_NAME. Builds are not notarized: install the CLI with \`curl -fsSL https://wrec-beta.vercel.app/install | sh\` or Homebrew to avoid the Gatekeeper warning. For the app DMG, use System Settings > Privacy & Security > Open Anyway on first launch." \
             --verify-tag
