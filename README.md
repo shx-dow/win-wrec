@@ -28,10 +28,23 @@ Windows-native rewrite using DXGI output duplication, WASAPI loopback capture,
 and Media Foundation H.264/HEVC encoding. No external dependencies — pure Rust
 and Win32 APIs via the `windows` crate.
 
-## Build
+## Install
 
 ```powershell
-cargo build --bin wrec
+# Build release binary
+cargo build --release -p cli -p daemon
+
+# Copy to a PATH directory (example: User Programs)
+mkdir -Force "$env:LOCALAPPDATA\Programs\winwrec\bin" | Out-Null
+copy target\release\winwrec.exe "$env:LOCALAPPDATA\Programs\winwrec\bin\"
+copy target\release\daemon.exe "$env:LOCALAPPDATA\Programs\winwrec\bin\"
+
+# Add to PATH (run once, restart terminal)
+[Environment]::SetEnvironmentVariable(
+  "PATH",
+  [Environment]::GetEnvironmentVariable("PATH", "User") + ";$env:LOCALAPPDATA\Programs\winwrec\bin",
+  "User"
+)
 ```
 
 Requires Rust 1.78+ and the `x86_64-pc-windows-msvc` target (installed by default
@@ -40,20 +53,20 @@ with rustup on Windows).
 ## Quick start
 
 ```powershell
-# Start the daemon (background process)
-wrec daemon serve
+# Start the daemon
+winwrec daemon serve
 
 # List capture targets
-wrec targets --json
+winwrec targets --json
 
 # Record for 10 seconds
-wrec record --duration 10
+winwrec record --duration 10
 
 # Or record until Ctrl+C
-wrec record
+winwrec record
 ```
 
-Output is written to `~/Videos/Wrec/wrec-<unix-ts>.mp4`.
+Output is written to `~\Videos\Wrec\wrec-<unix-ts>.mp4`.
 
 ## License
 
