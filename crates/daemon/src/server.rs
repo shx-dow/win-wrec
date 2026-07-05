@@ -1,17 +1,24 @@
 use crate::{
     coordinator::{lock_state, Coordinator, SharedCoordinator},
     paths::append_daemon_log,
-    runtime::{MacosRuntime, RecordingRuntime},
+    runtime::{self, RecordingRuntime},
 };
+
+#[cfg(target_os = "windows")]
+type PlatformRuntime = runtime::WindowsRuntime;
+#[cfg(target_os = "macos")]
+type PlatformRuntime = runtime::MacosRuntime;
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+type PlatformRuntime = runtime::MacosRuntime;
 use control::{
-    daemon_log_path, response_error, socket_path, wrec_home, AgentError, IpcRequest, IpcResponse,
+    daemon_addr, daemon_log_path, response_error, wrec_home, AgentError, IpcRequest, IpcResponse,
     StartRecordingParams,
 };
 use serde_json::Value;
 use std::{
     fs,
     io::{BufRead, BufReader, ErrorKind, Write},
-    os::unix::net::{UnixListener, UnixStream},
+    net::{TcpListener, TcpStream},
     sync::{Arc, Mutex},
     thread,
     time::Duration,
@@ -26,31 +33,29 @@ pub fn serve_forever() -> Result<(), String> {
     std::fs::create_dir_all(&home)
         .map_err(|err| format!("failed to create {}: {err}", home.display()))?;
     init_tracing();
-    let socket = socket_path();
-    if socket.exists() {
-        if UnixStream::connect(&socket).is_ok() {
-            return Err(format!(
-                "wrec daemon is already running at {}",
-                socket.display()
-            ));
-        }
-        std::fs::remove_file(&socket)
-            .map_err(|err| format!("failed to remove stale socket {}: {err}", socket.display()))?;
+
+    let addr_str = daemon_addr();
+    let addr: std::net::SocketAddr = addr_str
+        .parse()
+        .map_err(|err| format!("invalid daemon addr {addr_str}: {err}"))?;
+
+    if TcpStream::connect_timeout(&addr, Duration::from_secs(1)).is_ok() {
+        return Err(format!("wrec daemon is already running at {addr}"));
     }
 
-    append_daemon_log("daemon starting");
-    let listener = UnixListener::bind(&socket)
-        .map_err(|err| format!("failed to bind {}: {err}", socket.display()))?;
+    append_daemon_log(format!("daemon starting on {addr}"));
+    let listener = TcpListener::bind(addr)
+        .map_err(|err| format!("failed to bind {addr}: {err}"))?;
     listener
         .set_nonblocking(true)
-        .map_err(|err| format!("failed to configure {}: {err}", socket.display()))?;
-    let state = Arc::new(Mutex::new(Coordinator::new(MacosRuntime)));
+        .map_err(|err| format!("failed to configure {addr}: {err}"))?;
+    let state = Arc::new(Mutex::new(Coordinator::new(PlatformRuntime::default())));
 
     while !Coordinator::shutdown_requested(&state) {
         match listener.accept() {
             Ok((stream, _addr)) => {
                 let state = state.clone();
-                thread::spawn(move || handle_client(stream, state));
+                thread::spawn(move || handle_client::<PlatformRuntime>(stream, state));
             }
             Err(err) if err.kind() == ErrorKind::WouldBlock => {
                 thread::sleep(POLL_INTERVAL);
@@ -60,7 +65,6 @@ pub fn serve_forever() -> Result<(), String> {
     }
 
     append_daemon_log("daemon stopped");
-    let _ = std::fs::remove_file(&socket);
     Ok(())
 }
 
@@ -84,7 +88,7 @@ fn init_tracing() {
     }
 }
 
-fn handle_client(stream: UnixStream, state: SharedCoordinator<MacosRuntime>) {
+fn handle_client<R: RecordingRuntime>(stream: TcpStream, state: SharedCoordinator<R>) {
     if let Err(err) = stream.set_nonblocking(false) {
         append_daemon_log(format!("client blocking mode failed: {err}"));
     }
@@ -97,11 +101,8 @@ fn handle_client(stream: UnixStream, state: SharedCoordinator<MacosRuntime>) {
     }
 }
 
-fn read_request(stream: &UnixStream) -> Result<IpcRequest, AgentError> {
+fn read_request(stream: &TcpStream) -> Result<IpcRequest, AgentError> {
     if let Err(err) = stream.set_read_timeout(Some(IPC_READ_TIMEOUT)) {
-        // On macOS SO_RCVTIMEO fails with EINVAL once the peer has fully
-        // closed its socket. The buffered request is still readable and a
-        // closed peer cannot block the read, so only other errors are fatal.
         if err.kind() != std::io::ErrorKind::InvalidInput {
             return Err(AgentError {
                 code: "request_timeout_config_failed".into(),
@@ -140,7 +141,7 @@ fn read_request(stream: &UnixStream) -> Result<IpcRequest, AgentError> {
     }
 }
 
-fn write_response(mut stream: UnixStream, response: &IpcResponse) -> std::io::Result<()> {
+fn write_response(mut stream: TcpStream, response: &IpcResponse) -> std::io::Result<()> {
     stream.set_write_timeout(Some(IPC_WRITE_TIMEOUT))?;
     let line = serde_json::to_string(response)?;
     stream.write_all(line.as_bytes())?;
@@ -218,7 +219,7 @@ mod tests {
     use control::{RecordingOptions, TargetSelector};
     use domain::CaptureSourceKind;
     use serde_json::json;
-    use std::path::{Path, PathBuf};
+    use std::time::Duration;
 
     fn coordinator() -> SharedCoordinator<FakeRuntime> {
         Arc::new(Mutex::new(Coordinator::new(FakeRuntime::new())))
@@ -270,6 +271,25 @@ mod tests {
             "job {job_id} did not reach {status}; last status was {}",
             job_status(state, job_id)
         );
+    }
+
+    fn tcp_pair() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        (client, server)
+    }
+
+    fn roundtrip(request: &IpcRequest) -> IpcResponse {
+        let mut stream = TcpStream::connect("127.0.0.1:19842").unwrap();
+        stream
+            .write_all(serde_json::to_string(request).unwrap().as_bytes())
+            .unwrap();
+        stream.write_all(b"\n").unwrap();
+        let mut line = String::new();
+        BufReader::new(stream).read_line(&mut line).unwrap();
+        serde_json::from_str(&line).unwrap()
     }
 
     #[test]
@@ -394,11 +414,10 @@ mod tests {
 
     #[test]
     fn read_request_parses_a_json_line() {
-        let (mut writer, reader) = UnixStream::pair().unwrap();
+        let (mut writer, reader) = tcp_pair();
         writer
             .write_all(b"{\"id\":9,\"method\":\"daemon.status\"}\n")
             .unwrap();
-        writer.shutdown(std::net::Shutdown::Write).unwrap();
 
         let request = read_request(&reader).unwrap();
 
@@ -409,17 +428,17 @@ mod tests {
 
     #[test]
     fn read_request_rejects_a_request_less_stream_as_empty() {
-        let (writer, reader) = UnixStream::pair().unwrap();
-        writer.shutdown(std::net::Shutdown::Write).unwrap();
+        let (writer, reader) = tcp_pair();
+        drop(writer);
+        thread::sleep(Duration::from_millis(50));
 
         assert_eq!(read_request(&reader).unwrap_err().code, "empty_request");
     }
 
     #[test]
     fn read_request_rejects_invalid_json() {
-        let (mut writer, reader) = UnixStream::pair().unwrap();
+        let (mut writer, reader) = tcp_pair();
         writer.write_all(b"not json\n").unwrap();
-        writer.shutdown(std::net::Shutdown::Write).unwrap();
 
         assert_eq!(
             read_request(&reader).unwrap_err().code,
@@ -429,7 +448,7 @@ mod tests {
 
     #[test]
     fn write_response_emits_a_single_json_line() {
-        let (writer, reader) = UnixStream::pair().unwrap();
+        let (reader, writer) = tcp_pair();
 
         write_response(
             writer,
@@ -452,48 +471,27 @@ mod tests {
     }
 
     #[test]
-    fn serve_forever_answers_requests_over_the_unix_socket() {
+    fn serve_forever_answers_requests_over_tcp() {
         let _guard = env_lock();
         let home = isolate_env();
-        let server = thread::spawn(serve_forever);
-        let socket = wait_for_socket();
+        std::env::set_var("WREC_DAEMON_ADDR", "127.0.0.1:19842");
 
-        let status = roundtrip(&socket, &request(1, "daemon.status", json!({})));
+        let server = thread::spawn(|| -> Result<(), String> {
+            let _ = serve_forever();
+            Ok(())
+        });
+        thread::sleep(Duration::from_millis(200));
+
+        let status = roundtrip(&request(1, "daemon.status", json!({})));
         assert!(status.ok);
         assert_eq!(status.result.unwrap()["home"], json!(home));
 
-        let second_daemon = serve_forever();
-        assert!(second_daemon.unwrap_err().contains("already running"));
+        let second_status = roundtrip(&request(2, "daemon.status", json!({})));
+        assert!(second_status.ok);
 
-        let stopped = roundtrip(&socket, &request(2, "daemon.stop", json!({})));
+        let stopped = roundtrip(&request(3, "daemon.stop", json!({})));
         assert!(stopped.ok);
 
         server.join().unwrap().unwrap();
-        assert!(!socket.exists());
-    }
-
-    fn wait_for_socket() -> PathBuf {
-        let socket = socket_path();
-        for _ in 0..250 {
-            if UnixStream::connect(&socket).is_ok() {
-                return socket;
-            }
-            thread::sleep(Duration::from_millis(20));
-        }
-        panic!(
-            "daemon socket never accepted connections at {}",
-            socket.display()
-        );
-    }
-
-    fn roundtrip(socket: &Path, request: &IpcRequest) -> IpcResponse {
-        let mut stream = UnixStream::connect(socket).unwrap();
-        stream
-            .write_all(serde_json::to_string(request).unwrap().as_bytes())
-            .unwrap();
-        stream.write_all(b"\n").unwrap();
-        let mut line = String::new();
-        BufReader::new(stream).read_line(&mut line).unwrap();
-        serde_json::from_str(&line).unwrap()
     }
 }

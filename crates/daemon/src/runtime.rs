@@ -2,7 +2,6 @@ use control::AgentError;
 use domain::{
     CaptureTarget, RecorderEngine, RecorderError, RecorderEvent, ScreenRecordingPermissionStatus,
 };
-use macos::MacosRecorder;
 use std::sync::mpsc;
 
 pub(crate) trait RecordingRuntime: Clone + Send + Sync + 'static {
@@ -22,11 +21,11 @@ pub(crate) trait RecordingRuntime: Clone + Send + Sync + 'static {
 pub(crate) struct MacosRuntime;
 
 impl RecordingRuntime for MacosRuntime {
-    type Engine = MacosRecorder;
+    type Engine = macos::MacosRecorder;
 
     fn list_targets(&self) -> Result<Vec<CaptureTarget>, AgentError> {
         let (tx, _rx) = mpsc::channel();
-        MacosRecorder::new(tx).list_targets().map_err(|err| AgentError {
+        macos::MacosRecorder::new(tx).list_targets().map_err(|err| AgentError {
             code: "target_listing_failed".into(),
             message: err.to_string(),
             recoverable: true,
@@ -38,7 +37,7 @@ impl RecordingRuntime for MacosRuntime {
         &self,
     ) -> Result<ScreenRecordingPermissionStatus, AgentError> {
         let (tx, _rx) = mpsc::channel();
-        MacosRecorder::new(tx)
+        macos::MacosRecorder::new(tx)
             .screen_recording_permission_status()
             .map_err(permission_error)
     }
@@ -47,13 +46,50 @@ impl RecordingRuntime for MacosRuntime {
         &self,
     ) -> Result<ScreenRecordingPermissionStatus, AgentError> {
         let (tx, _rx) = mpsc::channel();
-        MacosRecorder::new(tx)
+        macos::MacosRecorder::new(tx)
             .request_screen_recording_permission()
             .map_err(permission_error)
     }
 
     fn new_engine(&self, events: mpsc::Sender<RecorderEvent>) -> Self::Engine {
-        MacosRecorder::new(events)
+        macos::MacosRecorder::new(events)
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Default)]
+pub(crate) struct WindowsRuntime;
+
+#[cfg(target_os = "windows")]
+impl RecordingRuntime for WindowsRuntime {
+    type Engine = windows_recorder::WindowsRecorder;
+
+    fn list_targets(&self) -> Result<Vec<CaptureTarget>, AgentError> {
+        let (tx, _rx) = mpsc::channel();
+        windows_recorder::WindowsRecorder::new(tx)
+            .list_targets()
+            .map_err(|err| AgentError {
+                code: "target_listing_failed".into(),
+                message: err.to_string(),
+                recoverable: true,
+                next: "Run `wrec targets --json` again; if this repeats, check that a display is available.".into(),
+            })
+    }
+
+    fn screen_recording_permission_status(
+        &self,
+    ) -> Result<ScreenRecordingPermissionStatus, AgentError> {
+        Ok(ScreenRecordingPermissionStatus::Granted)
+    }
+
+    fn request_screen_recording_permission(
+        &self,
+    ) -> Result<ScreenRecordingPermissionStatus, AgentError> {
+        Ok(ScreenRecordingPermissionStatus::Granted)
+    }
+
+    fn new_engine(&self, events: mpsc::Sender<RecorderEvent>) -> Self::Engine {
+        windows_recorder::WindowsRecorder::new(events)
     }
 }
 
