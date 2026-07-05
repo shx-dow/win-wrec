@@ -1,9 +1,9 @@
 class WrecCli < Formula
   desc "The most efficient screen recorder for mac, CLI runtime"
   homepage "https://wrec-beta.vercel.app"
-  version "0.1.0"
+  version "0.1.1"
   url "https://github.com/shivamhwp/wrec/releases/download/v#{version}/wrec-cli-aarch64-apple-darwin.tar.gz"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000" # replaced by scripts/update-homebrew.sh
+  sha256 "bd5f297ed722797c4453e1351cc6af8f434ecd9a1eaa82ea3078d1975e854174" # replaced by scripts/update-homebrew.sh
   license "MIT"
 
   depends_on :macos
