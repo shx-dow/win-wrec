@@ -34,8 +34,8 @@ pub struct MfEncoder {
     fps: u32,
     started: bool,
     finalized: bool,
-    video_sample_count: u64,
-    video_start_time: Option<std::time::Instant>,
+    recording_start: std::time::Instant,
+    first_pts: Option<i64>,
     audio_time: i64,
 }
 
@@ -119,8 +119,8 @@ impl MfEncoder {
             fps,
             started: true,
             finalized: false,
-            video_sample_count: 0,
-            video_start_time: None,
+            recording_start: std::time::Instant::now(),
+            first_pts: None,
             audio_time: 0,
         })
     }
@@ -130,8 +130,10 @@ impl MfEncoder {
             .ok_or_else(|| anyhow!("encoder finalized"))?;
 
         let now = std::time::Instant::now();
-        let elapsed = self.video_start_time.get_or_insert(now).elapsed();
-        let sample_time = (elapsed.as_secs() as i64) * 10_000_000 + (elapsed.subsec_nanos() as i64) / 100;
+        let elapsed = now - self.recording_start;
+        let raw_pts = (elapsed.as_secs() as i64) * 10_000_000 + (elapsed.subsec_nanos() as i64) / 100;
+        let first_pts = *self.first_pts.get_or_insert(raw_pts);
+        let sample_time = raw_pts - first_pts;
         let sample_duration = 10_000_000 / self.fps as i64;
 
         let row_bytes = (frame.width * 4) as usize;
@@ -167,11 +169,10 @@ impl MfEncoder {
         };
 
         wr(unsafe { sink_writer.WriteSample(self.video_stream_index, &sample) })?;
-        self.video_sample_count += 1;
         Ok(())
     }
 
-    pub fn write_audio(&mut self, samples: &super::audio::AudioSamples) -> Result<()> {
+    pub fn write_audio(&mut self, samples: &super::audio::AudioSamples, timestamp: i64) -> Result<()> {
         let Some(audio_stream) = self.audio_stream_index else { return Ok(()) };
         let sink_writer = self.sink_writer.as_ref()
             .ok_or_else(|| anyhow!("encoder finalized"))?;
@@ -198,13 +199,12 @@ impl MfEncoder {
                 wr(buffer.Unlock())?;
             }
             wr(unsafe { s.AddBuffer(&buffer) })?;
-            wr(unsafe { s.SetSampleTime(self.audio_time) })?;
+            wr(unsafe { s.SetSampleTime(timestamp) })?;
             wr(unsafe { s.SetSampleDuration(sample_duration) })?;
             s
         };
 
         wr(unsafe { sink_writer.WriteSample(audio_stream, &sample) })?;
-        self.audio_time += sample_duration;
         Ok(())
     }
 
@@ -352,6 +352,8 @@ impl MfEncoder {
         }
     }
 }
+
+unsafe impl Send for MfEncoder {}
 
 impl Drop for MfEncoder {
     fn drop(&mut self) {
