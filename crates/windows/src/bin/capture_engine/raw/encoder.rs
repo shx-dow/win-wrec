@@ -142,6 +142,12 @@ impl MfEncoder {
             bgra.extend_from_slice(&frame.data[off..off + row_bytes]);
         }
 
+        if let Some(cursor) = &frame.cursor {
+            if cursor.visible && !cursor.bitmap.is_empty() {
+                Self::composite_cursor(&mut bgra, frame.width, frame.height, cursor);
+            }
+        }
+
         let sample = {
             let s = wr(unsafe { MFCreateSample() })?;
             let buffer = wr(unsafe { MFCreateMemoryBuffer(bgra.len() as u32) })?;
@@ -279,6 +285,71 @@ impl MfEncoder {
             Codec::H264 => 1.35,
         };
         (pixels_per_second as f64 * bits_per_pixel * codec_scale).max(1_500_000.0) as u32
+    }
+
+    fn composite_cursor(
+        bgra: &mut [u8],
+        frame_width: u32,
+        frame_height: u32,
+        cursor: &super::dxgi::CursorInfo,
+    ) {
+        const PT_COLOR: u32 = 0x00000002;
+        const PT_MASKED_COLOR: u32 = 0x00000004;
+
+        let fw = frame_width as i32;
+        let fh = frame_height as i32;
+        let cw = cursor.bitmap_width as i32;
+        let ch = cursor.bitmap_height as i32;
+        let row_bytes = fw as usize * 4;
+
+        let cx = cursor.x.saturating_sub(cursor.hotspot_x);
+        let cy = cursor.y.saturating_sub(cursor.hotspot_y);
+
+        let start_x = 0.max(-cx);
+        let start_y = 0.max(-cy);
+        let end_x = cw.min(fw - cx);
+        let end_y = ch.min(fh - cy);
+
+        if start_x >= end_x || start_y >= end_y {
+            return;
+        }
+
+        let bpitch = cursor.bitmap_pitch as usize;
+
+        for fy in start_y..end_y {
+            let screen_y = (cy + fy) as i32;
+            if screen_y < 0 || screen_y >= fh { continue; }
+            let frame_y = (fh - 1 - screen_y) as usize;
+            for fx in start_x..end_x {
+                let screen_x = (cx + fx) as i32;
+                if screen_x < 0 || screen_x >= fw { continue; }
+                let frame_x = screen_x as usize;
+                let src_off = fy as usize * bpitch + fx as usize * 4;
+                if src_off + 3 >= cursor.bitmap.len() { continue; }
+
+                let cb = cursor.bitmap[src_off] as u32;
+                let cg = cursor.bitmap[src_off + 1] as u32;
+                let cr = cursor.bitmap[src_off + 2] as u32;
+                let ca = cursor.bitmap[src_off + 3] as u32;
+
+                let dst_off = frame_y * row_bytes + frame_x * 4;
+
+                if cursor.cursor_type == PT_COLOR {
+                    if ca >= 255 {
+                        bgra[dst_off..dst_off + 4].copy_from_slice(&[cb as u8, cg as u8, cr as u8, 255]);
+                    } else if ca > 0 {
+                        let fa = 255 - ca;
+                        bgra[dst_off] = ((cb * ca + bgra[dst_off] as u32 * fa) / 255) as u8;
+                        bgra[dst_off + 1] = ((cg * ca + bgra[dst_off + 1] as u32 * fa) / 255) as u8;
+                        bgra[dst_off + 2] = ((cr * ca + bgra[dst_off + 2] as u32 * fa) / 255) as u8;
+                    }
+                } else if cursor.cursor_type == PT_MASKED_COLOR {
+                    if !(cr == 255 && cg == 0 && cb == 255) {
+                        bgra[dst_off..dst_off + 4].copy_from_slice(&[cb as u8, cg as u8, cr as u8, 255]);
+                    }
+                }
+            }
+        }
     }
 }
 

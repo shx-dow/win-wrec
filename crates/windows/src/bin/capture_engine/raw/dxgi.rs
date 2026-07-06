@@ -19,6 +19,27 @@ pub struct DxgiCapture {
     staging_texture: Option<ID3D11Texture2D>,
     width: u32,
     height: u32,
+    cursor_bitmap: Vec<u8>,
+    cursor_width: u32,
+    cursor_height: u32,
+    cursor_pitch: u32,
+    cursor_hotspot_x: i32,
+    cursor_hotspot_y: i32,
+    cursor_type: u32,
+}
+
+#[derive(Clone)]
+pub struct CursorInfo {
+    pub visible: bool,
+    pub x: i32,
+    pub y: i32,
+    pub bitmap: Vec<u8>,
+    pub bitmap_width: u32,
+    pub bitmap_height: u32,
+    pub bitmap_pitch: u32,
+    pub hotspot_x: i32,
+    pub hotspot_y: i32,
+    pub cursor_type: u32,
 }
 
 #[derive(Clone)]
@@ -27,6 +48,7 @@ pub struct FrameData {
     pub width: u32,
     pub height: u32,
     pub pitch: u32,
+    pub cursor: Option<CursorInfo>,
 }
 
 const FRAME_TIMEOUT: u32 = 0;
@@ -68,7 +90,11 @@ impl DxgiCapture {
         let w = dup_desc.ModeDesc.Width.max(1);
         let h = dup_desc.ModeDesc.Height.max(1);
 
-        Ok(Self { device, context, duplication, staging_texture: None, width: w, height: h })
+        Ok(Self {
+            device, context, duplication, staging_texture: None, width: w, height: h,
+            cursor_bitmap: Vec::new(), cursor_width: 0, cursor_height: 0, cursor_pitch: 0,
+            cursor_hotspot_x: 0, cursor_hotspot_y: 0, cursor_type: 0,
+        })
     }
 
     pub fn width(&self) -> u32 { self.width }
@@ -113,6 +139,8 @@ impl DxgiCapture {
                 self.width = sd.Width; self.height = sd.Height;
             }
 
+            let cursor = self.update_cursor(&fi)?;
+
             let stg = self.staging_texture.as_ref().unwrap();
             self.context.CopyResource(stg, &src);
             let _ = self.duplication.ReleaseFrame();
@@ -122,8 +150,48 @@ impl DxgiCapture {
             let total = (pitch * self.height) as usize;
             let data = std::slice::from_raw_parts(mapped.pData as *const u8, total).to_vec();
             self.context.Unmap(stg, 0);
-            Ok(FrameData { data, width: self.width, height: self.height, pitch })
+            Ok(FrameData { data, width: self.width, height: self.height, pitch, cursor })
         }
+    }
+
+    fn update_cursor(&mut self, fi: &DXGI_OUTDUPL_FRAME_INFO) -> Result<Option<CursorInfo>> {
+        if !fi.PointerPosition.Visible.as_bool() {
+            return Ok(None);
+        }
+        if fi.PointerShapeBufferSize > 0 {
+            let size = fi.PointerShapeBufferSize as usize;
+            let mut buffer = vec![0u8; size];
+            let mut info = DXGI_OUTDUPL_POINTER_SHAPE_INFO::default();
+            let mut written: u32 = 0;
+            wr(unsafe {
+                self.duplication.GetFramePointerShape(
+                    size as u32,
+                    buffer.as_mut_ptr() as *mut _,
+                    &mut written,
+                    &mut info,
+                )
+            })?;
+            self.cursor_bitmap = buffer;
+            self.cursor_width = info.Width;
+            self.cursor_height = info.Height;
+            self.cursor_pitch = info.Pitch;
+            self.cursor_hotspot_x = info.HotSpot.x;
+            self.cursor_hotspot_y = info.HotSpot.y;
+            self.cursor_type = info.Type;
+        }
+        let pos = fi.PointerPosition.Position;
+        Ok(Some(CursorInfo {
+            visible: true,
+            x: pos.x,
+            y: pos.y,
+            bitmap: self.cursor_bitmap.clone(),
+            bitmap_width: self.cursor_width,
+            bitmap_height: self.cursor_height,
+            bitmap_pitch: self.cursor_pitch,
+            hotspot_x: self.cursor_hotspot_x,
+            hotspot_y: self.cursor_hotspot_y,
+            cursor_type: self.cursor_type,
+        }))
     }
 
     pub fn release_frame(&self) {}
