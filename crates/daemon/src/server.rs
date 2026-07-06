@@ -1,19 +1,17 @@
 use crate::{
     coordinator::{lock_state, Coordinator, SharedCoordinator},
     paths::append_daemon_log,
-    runtime::{self, RecordingRuntime},
+    runtime::{PlatformRuntime, RecordingRuntime},
 };
-
-type PlatformRuntime = runtime::WindowsRuntime;
 use control::{
-    daemon_addr, daemon_log_path, response_error, wrec_home, AgentError, IpcRequest, IpcResponse,
+    bind_listener, cleanup_stale_endpoint, daemon_log_path, endpoint_connectable, endpoint_display,
+    remove_endpoint, response_error, wrec_home, AgentError, IpcRequest, IpcResponse, IpcStream,
     StartRecordingParams,
 };
 use serde_json::Value;
 use std::{
     fs,
     io::{BufRead, BufReader, ErrorKind, Write},
-    net::{TcpListener, TcpStream},
     sync::{Arc, Mutex},
     thread,
     time::Duration,
@@ -28,29 +26,32 @@ pub fn serve_forever() -> Result<(), String> {
     std::fs::create_dir_all(&home)
         .map_err(|err| format!("failed to create {}: {err}", home.display()))?;
     init_tracing();
-
-    let addr_str = daemon_addr();
-    let addr: std::net::SocketAddr = addr_str
-        .parse()
-        .map_err(|err| format!("invalid daemon addr {addr_str}: {err}"))?;
-
-    if TcpStream::connect_timeout(&addr, Duration::from_secs(1)).is_ok() {
-        return Err(format!("wrec daemon is already running at {addr}"));
+    if endpoint_connectable() {
+        return Err(format!(
+            "wrec daemon is already running at {}",
+            endpoint_display()
+        ));
     }
+    cleanup_stale_endpoint().map_err(|err| {
+        format!(
+            "failed to remove stale IPC endpoint {}: {err}",
+            endpoint_display()
+        )
+    })?;
 
-    append_daemon_log(format!("daemon starting on {addr}"));
-    let listener = TcpListener::bind(addr)
-        .map_err(|err| format!("failed to bind {addr}: {err}"))?;
+    append_daemon_log("daemon starting");
+    let listener =
+        bind_listener().map_err(|err| format!("failed to bind {}: {err}", endpoint_display()))?;
     listener
         .set_nonblocking(true)
-        .map_err(|err| format!("failed to configure {addr}: {err}"))?;
+        .map_err(|err| format!("failed to configure {}: {err}", endpoint_display()))?;
     let state = Arc::new(Mutex::new(Coordinator::new(PlatformRuntime::default())));
 
     while !Coordinator::shutdown_requested(&state) {
         match listener.accept() {
             Ok((stream, _addr)) => {
                 let state = state.clone();
-                thread::spawn(move || handle_client::<PlatformRuntime>(stream, state));
+                thread::spawn(move || handle_client(stream, state));
             }
             Err(err) if err.kind() == ErrorKind::WouldBlock => {
                 thread::sleep(POLL_INTERVAL);
@@ -60,6 +61,7 @@ pub fn serve_forever() -> Result<(), String> {
     }
 
     append_daemon_log("daemon stopped");
+    let _ = remove_endpoint();
     Ok(())
 }
 
@@ -83,7 +85,7 @@ fn init_tracing() {
     }
 }
 
-fn handle_client<R: RecordingRuntime>(stream: TcpStream, state: SharedCoordinator<R>) {
+fn handle_client(stream: IpcStream, state: SharedCoordinator<PlatformRuntime>) {
     if let Err(err) = stream.set_nonblocking(false) {
         append_daemon_log(format!("client blocking mode failed: {err}"));
     }
@@ -96,8 +98,11 @@ fn handle_client<R: RecordingRuntime>(stream: TcpStream, state: SharedCoordinato
     }
 }
 
-fn read_request(stream: &TcpStream) -> Result<IpcRequest, AgentError> {
+fn read_request(stream: &IpcStream) -> Result<IpcRequest, AgentError> {
     if let Err(err) = stream.set_read_timeout(Some(IPC_READ_TIMEOUT)) {
+        // On macOS SO_RCVTIMEO fails with EINVAL once the peer has fully
+        // closed its socket. The buffered request is still readable and a
+        // closed peer cannot block the read, so only other errors are fatal.
         if err.kind() != std::io::ErrorKind::InvalidInput {
             return Err(AgentError {
                 code: "request_timeout_config_failed".into(),
@@ -136,7 +141,7 @@ fn read_request(stream: &TcpStream) -> Result<IpcRequest, AgentError> {
     }
 }
 
-fn write_response(mut stream: TcpStream, response: &IpcResponse) -> std::io::Result<()> {
+fn write_response(mut stream: IpcStream, response: &IpcResponse) -> std::io::Result<()> {
     stream.set_write_timeout(Some(IPC_WRITE_TIMEOUT))?;
     let line = serde_json::to_string(response)?;
     stream.write_all(line.as_bytes())?;
@@ -211,10 +216,9 @@ fn job_id_param(params: &Value, method: &str) -> Result<u64, AgentError> {
 mod tests {
     use super::*;
     use crate::test_support::{env_lock, isolate_env, FakeRuntime};
-    use control::{RecordingOptions, TargetSelector};
+    use control::{connect_stream, RecordingOptions, TargetSelector};
     use domain::CaptureSourceKind;
     use serde_json::json;
-    use std::time::Duration;
 
     fn coordinator() -> SharedCoordinator<FakeRuntime> {
         Arc::new(Mutex::new(Coordinator::new(FakeRuntime::new())))
@@ -266,25 +270,6 @@ mod tests {
             "job {job_id} did not reach {status}; last status was {}",
             job_status(state, job_id)
         );
-    }
-
-    fn tcp_pair() -> (TcpStream, TcpStream) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let client = TcpStream::connect(addr).unwrap();
-        let (server, _) = listener.accept().unwrap();
-        (client, server)
-    }
-
-    fn roundtrip(request: &IpcRequest) -> IpcResponse {
-        let mut stream = TcpStream::connect("127.0.0.1:19842").unwrap();
-        stream
-            .write_all(serde_json::to_string(request).unwrap().as_bytes())
-            .unwrap();
-        stream.write_all(b"\n").unwrap();
-        let mut line = String::new();
-        BufReader::new(stream).read_line(&mut line).unwrap();
-        serde_json::from_str(&line).unwrap()
     }
 
     #[test]
@@ -407,12 +392,16 @@ mod tests {
         assert_eq!(rejected.error.unwrap().code, "daemon_stopping");
     }
 
+    #[cfg(unix)]
     #[test]
     fn read_request_parses_a_json_line() {
-        let (mut writer, reader) = tcp_pair();
+        use std::os::unix::net::UnixStream;
+
+        let (mut writer, reader) = UnixStream::pair().unwrap();
         writer
             .write_all(b"{\"id\":9,\"method\":\"daemon.status\"}\n")
             .unwrap();
+        writer.shutdown(std::net::Shutdown::Write).unwrap();
 
         let request = read_request(&reader).unwrap();
 
@@ -421,19 +410,25 @@ mod tests {
         assert_eq!(request.params, Value::Null);
     }
 
+    #[cfg(unix)]
     #[test]
     fn read_request_rejects_a_request_less_stream_as_empty() {
-        let (writer, reader) = tcp_pair();
-        drop(writer);
-        thread::sleep(Duration::from_millis(50));
+        use std::os::unix::net::UnixStream;
+
+        let (writer, reader) = UnixStream::pair().unwrap();
+        writer.shutdown(std::net::Shutdown::Write).unwrap();
 
         assert_eq!(read_request(&reader).unwrap_err().code, "empty_request");
     }
 
+    #[cfg(unix)]
     #[test]
     fn read_request_rejects_invalid_json() {
-        let (mut writer, reader) = tcp_pair();
+        use std::os::unix::net::UnixStream;
+
+        let (mut writer, reader) = UnixStream::pair().unwrap();
         writer.write_all(b"not json\n").unwrap();
+        writer.shutdown(std::net::Shutdown::Write).unwrap();
 
         assert_eq!(
             read_request(&reader).unwrap_err().code,
@@ -441,9 +436,12 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn write_response_emits_a_single_json_line() {
-        let (reader, writer) = tcp_pair();
+        use std::os::unix::net::UnixStream;
+
+        let (writer, reader) = UnixStream::pair().unwrap();
 
         write_response(
             writer,
@@ -466,27 +464,47 @@ mod tests {
     }
 
     #[test]
-    fn serve_forever_answers_requests_over_tcp() {
+    fn serve_forever_answers_requests_over_ipc() {
         let _guard = env_lock();
         let home = isolate_env();
-        std::env::set_var("WREC_DAEMON_ADDR", "127.0.0.1:19842");
-
-        let server = thread::spawn(|| -> Result<(), String> {
-            let _ = serve_forever();
-            Ok(())
-        });
-        thread::sleep(Duration::from_millis(200));
+        let server = thread::spawn(serve_forever);
+        wait_for_endpoint();
 
         let status = roundtrip(&request(1, "daemon.status", json!({})));
         assert!(status.ok);
         assert_eq!(status.result.unwrap()["home"], json!(home));
 
-        let second_status = roundtrip(&request(2, "daemon.status", json!({})));
-        assert!(second_status.ok);
+        let second_daemon = serve_forever();
+        assert!(second_daemon.unwrap_err().contains("already running"));
 
-        let stopped = roundtrip(&request(3, "daemon.stop", json!({})));
+        let stopped = roundtrip(&request(2, "daemon.stop", json!({})));
         assert!(stopped.ok);
 
         server.join().unwrap().unwrap();
+        assert!(!endpoint_connectable());
+    }
+
+    fn wait_for_endpoint() {
+        for _ in 0..250 {
+            if endpoint_connectable() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        panic!(
+            "daemon IPC endpoint never accepted connections at {}",
+            endpoint_display()
+        );
+    }
+
+    fn roundtrip(request: &IpcRequest) -> IpcResponse {
+        let mut stream = connect_stream().unwrap();
+        stream
+            .write_all(serde_json::to_string(request).unwrap().as_bytes())
+            .unwrap();
+        stream.write_all(b"\n").unwrap();
+        let mut line = String::new();
+        BufReader::new(stream).read_line(&mut line).unwrap();
+        serde_json::from_str(&line).unwrap()
     }
 }

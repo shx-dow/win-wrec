@@ -1,10 +1,7 @@
 use domain::{
-    CaptureTarget, RecorderEngine, RecorderError, RecorderEvent,
-    RecorderSettings, RecordingSession, Result,
+    CaptureSourceKind, CaptureTarget, RecorderEngine, RecorderError, RecorderEvent,
+    RecorderMetrics, RecorderSettings, RecordingSession, Result, ScreenRecordingPermissionStatus,
 };
-
-#[cfg(target_os = "windows")]
-use domain::RecorderMetrics;
 
 static LAST_SESSION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -12,16 +9,6 @@ static LAST_SESSION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomic
 pub struct WindowsRecorder {
     active: Option<RecordingSession>,
     events: Option<std::sync::mpsc::Sender<RecorderEvent>>,
-    capture: Option<CaptureState>,
-}
-
-struct CaptureState {
-    #[allow(dead_code)]
-    session_id: u64,
-    #[allow(dead_code)]
-    output_path: std::path::PathBuf,
-    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl WindowsRecorder {
@@ -29,7 +16,6 @@ impl WindowsRecorder {
         Self {
             active: None,
             events: Some(events),
-            capture: None,
         }
     }
 
@@ -46,37 +32,12 @@ impl WindowsRecorder {
         });
     }
 
-    fn next_session_id(&self) -> u64 {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now_micros = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_micros().min(u64::MAX as u128) as u64)
-            .unwrap_or_default();
-        loop {
-            let current = LAST_SESSION_ID.load(std::sync::atomic::Ordering::Relaxed);
-            let next = now_micros.max(current.saturating_add(1));
-            if LAST_SESSION_ID
-                .compare_exchange(
-                    current,
-                    next,
-                    std::sync::atomic::Ordering::Relaxed,
-                    std::sync::atomic::Ordering::Relaxed,
-                )
-                .is_ok()
-            {
-                return next;
-            }
-        }
+    pub fn screen_recording_permission_status(&self) -> Result<ScreenRecordingPermissionStatus> {
+        platform::screen_recording_permission_status()
     }
 
-    fn recording_output_path(&self, settings: &RecorderSettings) -> std::path::PathBuf {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or_default();
-        let filename = format!("wrec-{}.mp4", secs);
-        settings.output_dir.join(filename)
+    pub fn request_screen_recording_permission(&self) -> Result<ScreenRecordingPermissionStatus> {
+        platform::request_screen_recording_permission()
     }
 }
 
@@ -90,34 +51,22 @@ impl RecorderEngine for WindowsRecorder {
         target: CaptureTarget,
         settings: RecorderSettings,
     ) -> Result<RecordingSession> {
-        let session_id = self.next_session_id();
-        let output_path = self.recording_output_path(&settings);
+        let session_id = next_session_id();
+        let output_path = recording_output_path(&settings);
         self.emit(RecorderEvent::Starting {
             session_id,
             target: target.clone(),
             settings: settings.clone(),
             output_path: output_path.clone(),
         });
-
-        let session = match platform::start_capture(
+        let session = match platform::start_recording(
             session_id,
-            &target,
-            &settings,
-            &output_path,
+            target,
+            settings,
+            output_path,
             self.events.clone(),
         ) {
-            Ok((handle, shutdown)) => {
-                self.capture = Some(CaptureState {
-                    session_id,
-                    output_path: output_path.clone(),
-                    shutdown,
-                    handle: Some(handle),
-                });
-                RecordingSession {
-                    id: session_id,
-                    output_path,
-                }
-            }
+            Ok(session) => session,
             Err(err) => {
                 self.emit(RecorderEvent::Failed {
                     session_id: Some(session_id),
@@ -126,7 +75,6 @@ impl RecorderEngine for WindowsRecorder {
                 return Err(err);
             }
         };
-
         self.active = Some(session.clone());
         self.emit_log(
             Some(session.id),
@@ -136,291 +84,692 @@ impl RecorderEngine for WindowsRecorder {
     }
 
     fn stop(&mut self) -> Result<()> {
-        let session_id = self.active.as_ref().map(|s| s.id);
+        let session_id = self.active.as_ref().map(|session| session.id);
         self.emit_log(session_id, "stopping recording");
-
-        if let Some(capture) = self.capture.take() {
-            capture.shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
-            if let Some(handle) = capture.handle {
-                let _ = handle.join();
-            }
-        }
-
+        platform::stop_recording()?;
         self.active = None;
         self.emit_log(session_id, "recording stopped");
         Ok(())
     }
 
     fn pause(&mut self) -> Result<()> {
-        if self.capture.is_some() {
-            platform::set_paused(true);
-            let session_id = self.active.as_ref().map(|s| s.id);
-            self.emit_log(session_id, "recording paused");
-        }
+        let session_id = self.active.as_ref().map(|session| session.id);
+        self.emit_log(session_id, "pausing recording");
+        platform::pause_recording()?;
+        self.emit_log(session_id, "recording pause requested");
         Ok(())
     }
 
     fn resume(&mut self) -> Result<()> {
-        if self.capture.is_some() {
-            platform::set_paused(false);
-            let session_id = self.active.as_ref().map(|s| s.id);
-            self.emit_log(session_id, "recording resumed");
-        }
+        let session_id = self.active.as_ref().map(|session| session.id);
+        self.emit_log(session_id, "resuming recording");
+        platform::resume_recording()?;
+        self.emit_log(session_id, "recording resume requested");
         Ok(())
     }
 }
 
 impl Drop for WindowsRecorder {
     fn drop(&mut self) {
-        if let Some(capture) = self.capture.take() {
-            capture.shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+        if self.owns_active_session() {
+            let _ = platform::stop_recording();
         }
     }
+}
+
+impl WindowsRecorder {
+    fn owns_active_session(&self) -> bool {
+        self.active.is_some()
+    }
+}
+
+fn next_session_id() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now_micros = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_micros().min(u64::MAX as u128) as u64)
+        .unwrap_or_default();
+
+    loop {
+        let current = LAST_SESSION_ID.load(std::sync::atomic::Ordering::Relaxed);
+        let next = now_micros.max(current.saturating_add(1));
+        if LAST_SESSION_ID
+            .compare_exchange(
+                current,
+                next,
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+            )
+            .is_ok()
+        {
+            return next;
+        }
+    }
+}
+
+fn recording_output_path(settings: &RecorderSettings) -> std::path::PathBuf {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    let filename = format!("wrec-{}.mp4", secs);
+    settings.output_dir.join(filename)
 }
 
 #[cfg(target_os = "windows")]
 mod platform {
     use super::*;
-    use std::sync::{atomic::AtomicBool, mpsc, Arc};
+    use std::io::{BufRead, BufReader};
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Output, Stdio};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, Mutex, OnceLock,
+    };
+    use std::time::{Duration, Instant};
 
-    mod dxgi;
-    mod audio;
-    mod encoder;
+    const CAPTURE_ENGINE_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+    const START_TIMEOUT: Duration = Duration::from_secs(5);
+    const STOP_TIMEOUT: Duration = Duration::from_secs(20);
+    const STOP_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
-    use dxgi::DxgiCapture;
-    use audio::WasapiCapture;
-    use encoder::MfEncoder;
+    struct RecordingProcess {
+        child: std::process::Child,
+        session_id: u64,
+        events: Option<mpsc::Sender<RecorderEvent>>,
+        metrics_running: Arc<AtomicBool>,
+    }
 
-    static PAUSED: AtomicBool = AtomicBool::new(false);
+    enum StartupSignal {
+        Started,
+        Failed(String),
+    }
 
-    pub fn set_paused(paused: bool) {
-        PAUSED.store(paused, std::sync::atomic::Ordering::Relaxed);
+    static CHILD: OnceLock<Mutex<Option<RecordingProcess>>> = OnceLock::new();
+    const CAPTURE_ENGINE_BASENAME: &str = "capture-engine";
+
+    pub fn screen_recording_permission_status() -> Result<ScreenRecordingPermissionStatus> {
+        run_permission_command("--permission-status")
+    }
+
+    pub fn request_screen_recording_permission() -> Result<ScreenRecordingPermissionStatus> {
+        run_permission_command("--request-permission")
     }
 
     pub fn list_targets() -> Result<Vec<CaptureTarget>> {
-        dxgi::enumerate_targets()
-    }
+        let output = run_capture_engine_command(&["--list"], "target listing")?;
 
-    pub fn start_capture(
-        session_id: u64,
-        target: &CaptureTarget,
-        settings: &RecorderSettings,
-        output_path: &std::path::PathBuf,
-        events: Option<mpsc::Sender<RecorderEvent>>,
-    ) -> Result<(std::thread::JoinHandle<()>, Arc<AtomicBool>)> {
-        std::fs::create_dir_all(&settings.output_dir)
-            .map_err(|e| RecorderError::Backend(e.to_string()))?;
-
-        let paused = Arc::new(AtomicBool::new(false));
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let shutdown_clone = shutdown.clone();
-        let paused_clone = paused.clone();
-        let target_clone = target.clone();
-        let settings_clone = settings.clone();
-        let output_path_clone = output_path.clone();
-
-        let handle = std::thread::Builder::new()
-            .name("wrec-capture".into())
-            .spawn(move || {
-                if let Err(e) = run_capture_thread(
-                    session_id,
-                    &target_clone,
-                    &settings_clone,
-                    &output_path_clone,
-                    &shutdown_clone,
-                    &paused_clone,
-                    &events,
-                ) {
-                    emit_event(&events, RecorderEvent::Failed {
-                        session_id: Some(session_id),
-                        message: e.to_string(),
-                    });
-                    tracing::error!(?e, "capture thread failed");
-                }
-            })
-            .map_err(|e| RecorderError::Backend(format!("failed to spawn capture thread: {e}")))?;
-
-        Ok((handle, shutdown))
-    }
-
-    fn run_capture_thread(
-        session_id: u64,
-        target: &CaptureTarget,
-        settings: &RecorderSettings,
-        output_path: &std::path::PathBuf,
-        shutdown: &AtomicBool,
-        paused: &AtomicBool,
-        events: &Option<mpsc::Sender<RecorderEvent>>,
-    ) -> Result<()> {
-        unsafe {
-            windows::Win32::System::Com::CoInitializeEx(
-                None,
-                windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
-            )
-            .ok()
-            .map_err(|e| RecorderError::Backend(format!("CoInitializeEx failed: {e}")))?;
+        if !output.status.success() {
+            return Err(RecorderError::Backend(format!(
+                "target listing failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
         }
 
-        let mut dxgi = DxgiCapture::new(target)
-            .map_err(|e| RecorderError::Backend(format!("DXGI init: {e}")))?;
-        let mut audio = WasapiCapture::new(settings.include_system_audio)
-            .map_err(|e| RecorderError::Backend(format!("WASAPI init: {e}")))?;
-        let video_media_type = dxgi.media_type();
-        let audio_media_type = audio.media_type();
-        let mut encoder = MfEncoder::new(
-            output_path,
-            &video_media_type,
-            audio_media_type.as_ref(),
-            settings.fps.as_u32(),
-            settings.quality,
-            settings.codec,
-        ).map_err(|e| RecorderError::Backend(format!("encoder init: {e}")))?;
-
-        let target_fps = settings.fps.as_u32();
-        let frame_duration = std::time::Duration::from_micros(1_000_000 / target_fps as u64);
-        let mut next_frame_time = std::time::Instant::now();
-
-        emit_event(events, RecorderEvent::Log {
-            session_id: Some(session_id),
-            message: format!(
-                "capture started: {}x{} @ {}fps, audio={}",
-                dxgi.width(), dxgi.height(), target_fps,
-                settings.include_system_audio,
-            ),
-        });
-
-        emit_event(events, RecorderEvent::Log {
-            session_id: Some(session_id),
-            message: "capture started OK".into(),
-        });
-
-        let metric_start = std::time::Instant::now();
-        let mut frame_count: u64 = 0;
-
-        while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
-            let now = std::time::Instant::now();
-            if now < next_frame_time {
-                std::thread::sleep(next_frame_time - now);
-            }
-            next_frame_time += frame_duration;
-
-            if paused.load(std::sync::atomic::Ordering::Relaxed) {
-                let _ = audio.poll();
+        let mut targets = Vec::new();
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let mut parts = line.splitn(3, '\t');
+            let kind = match parts.next() {
+                Some("display") => CaptureSourceKind::Display,
+                Some("window") => CaptureSourceKind::Window,
+                _ => continue,
+            };
+            let Some(id) = parts.next().and_then(|id| id.parse::<u64>().ok()) else {
                 continue;
-            }
+            };
+            let name = parts.next().unwrap_or("Unknown").to_string();
+            targets.push(CaptureTarget { id, name, kind });
+        }
 
-            if let Some(audio_samples) = audio.poll() {
-                if let Err(e) = encoder.write_audio(&audio_samples) {
-                    tracing::error!(?e, "audio write failed");
-                }
-            } else if settings.include_system_audio {
-                let ch = audio.channels() as u64;
-                let sr = audio.sample_rate() as u64;
-                if ch > 0 && sr > 0 {
-                    let frame_period_ns = 1_000_000_000 / target_fps as u64;
-                    let num_frames = (sr * frame_period_ns / 1_000_000_000).max(1) as usize;
-                    let silence = vec![0u8; num_frames * ch as usize * 2];
-                    let dummy = audio::AudioSamples {
-                        data: silence,
-                        sample_rate: sr as u32,
-                        channels: ch as u16,
-                        bits_per_sample: 16,
-                    };
-                    if let Err(e) = encoder.write_audio(&dummy) {
-                        tracing::error!(?e, "silence write failed");
-                    }
-                }
-            }
+        if targets.is_empty() {
+            return Err(RecorderError::Backend(
+                "Windows Graphics Capture did not return any displays or windows".into(),
+            ));
+        }
+        Ok(targets)
+    }
 
-            match dxgi.acquire_frame() {
-                Ok(frame_data) => {
-                    if let Err(e) = encoder.write_video(&frame_data) {
-                        tracing::error!(?e, "video write failed");
-                    }
-                    dxgi.release_frame();
-                    frame_count += 1;
-                }
-                Err(e) => {
-                    if dxgi.is_timeout(&e) {
-                        continue;
-                    }
-                    tracing::error!(?e, "DXGI frame acquire failed");
-                    break;
-                }
-            }
+    pub fn start_recording(
+        session_id: u64,
+        target: CaptureTarget,
+        settings: RecorderSettings,
+        output_path: std::path::PathBuf,
+        events: Option<std::sync::mpsc::Sender<RecorderEvent>>,
+    ) -> Result<RecordingSession> {
+        std::fs::create_dir_all(&settings.output_dir)
+            .map_err(|err| RecorderError::Backend(err.to_string()))?;
 
-            let elapsed = metric_start.elapsed().as_secs();
-            if elapsed > 0 && frame_count % (target_fps as u64 * 5) == 0 {
-                let metadata = std::fs::metadata(output_path).ok();
-                let output_bytes = metadata.map(|m| m.len()).unwrap_or(0);
-                let estimated_bitrate = if elapsed > 0 {
-                    output_bytes as f32 * 8.0 / elapsed as f32 / 1_000_000.0
-                } else {
-                    0.0
-                };
-                emit_event(events, RecorderEvent::Metrics {
-                    session_id,
-                    metrics: RecorderMetrics {
-                        elapsed_secs: elapsed,
-                        output_bytes,
-                        estimated_bitrate_mbps: estimated_bitrate,
-                    },
-                });
+        let capture_engine = capture_engine_path()?;
+        let child_slot = CHILD.get_or_init(|| Mutex::new(None));
+        let mut active_child = child_slot.lock().unwrap();
+        if active_child.is_some() {
+            return Err(RecorderError::Backend("recording is already active".into()));
+        }
+
+        let mut child = Command::new(capture_engine)
+            .arg(&output_path)
+            .arg(settings.fps.as_u32().to_string())
+            .arg(if settings.include_cursor {
+                "true"
+            } else {
+                "false"
+            })
+            .arg(match target.kind {
+                CaptureSourceKind::Display => "display",
+                CaptureSourceKind::Window => "window",
+            })
+            .arg(target.id.to_string())
+            .arg(settings.codec.as_arg())
+            .arg(settings.quality.as_arg())
+            .arg(settings.resolution.as_arg())
+            .arg(if settings.include_system_audio {
+                "true"
+            } else {
+                "false"
+            })
+            .arg(if settings.hide_wrec { "true" } else { "false" })
+            .stdin(Stdio::piped())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|err| {
+                RecorderError::Backend(format!("failed to start capture engine: {err}"))
+            })?;
+
+        let metrics_running = Arc::new(AtomicBool::new(true));
+        let metrics_events = events.clone();
+        let stderr = child.stderr.take();
+        let (startup_tx, startup_rx) = mpsc::channel();
+
+        *active_child = Some(RecordingProcess {
+            child,
+            session_id,
+            events: events.clone(),
+            metrics_running: metrics_running.clone(),
+        });
+        drop(active_child);
+
+        let Some(stderr) = stderr else {
+            let _ = kill_active_child();
+            return Err(RecorderError::Backend(
+                "capture engine stderr was not available for startup handshake".into(),
+            ));
+        };
+
+        std::thread::spawn(move || {
+            forward_capture_engine_stderr(session_id, stderr, events, Some(startup_tx));
+        });
+
+        match startup_rx.recv_timeout(START_TIMEOUT) {
+            Ok(StartupSignal::Started) => {}
+            Ok(StartupSignal::Failed(message)) => {
+                let _ = std::fs::remove_file(&output_path);
+                return Err(RecorderError::Backend(format!(
+                    "capture engine failed to start recording: {message}"
+                )));
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let status = kill_active_child();
+                let _ = std::fs::remove_file(&output_path);
+                return Err(RecorderError::Backend(format!(
+                    "capture engine did not report start within {}s{status}",
+                    START_TIMEOUT.as_secs()
+                )));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = std::fs::remove_file(&output_path);
+                return Err(RecorderError::Backend(
+                    "capture engine startup channel closed before recording started".into(),
+                ));
             }
         }
 
-        tracing::info!(frames = frame_count, "capture thread stopping");
-        emit_event(events, RecorderEvent::Log {
-            session_id: Some(session_id),
-            message: format!("captured {frame_count} frames"),
-        });
-
-        drop(dxgi);
-        drop(audio);
-        encoder.finalize().map_err(|e| RecorderError::Backend(format!("encoder finalize: {e}")))?;
-
-        unsafe { windows::Win32::System::Com::CoUninitialize(); }
-
-        let metadata = std::fs::metadata(output_path).ok();
-        let output_bytes = metadata.map(|m| m.len()).unwrap_or(0);
-        let elapsed = metric_start.elapsed().as_secs();
-        emit_event(events, RecorderEvent::Exited {
+        spawn_metrics_thread(
             session_id,
-            success: true,
-            status: format!(
-                "recording finished frames={frame_count} size={output_bytes} elapsed={elapsed}s"
-            ),
-        });
+            output_path.clone(),
+            metrics_running,
+            metrics_events,
+        );
 
+        tracing::info!(?target, ?settings, ?output_path, "started capture engine");
+        Ok(RecordingSession {
+            id: session_id,
+            output_path,
+        })
+    }
+
+    pub fn stop_recording() -> Result<()> {
+        use std::io::Write;
+
+        let child_slot = CHILD.get_or_init(|| Mutex::new(None));
+        let Some(mut process) = child_slot.lock().unwrap().take() else {
+            return Ok(());
+        };
+
+        if let Some(stdin) = process.child.stdin.as_mut() {
+            let _ = stdin.write_all(b"stop\n");
+        }
+
+        let started_waiting = Instant::now();
+        let status = loop {
+            let stopped = match process.child.try_wait() {
+                Ok(stopped) => stopped,
+                Err(err) => {
+                    process.metrics_running.store(false, Ordering::Relaxed);
+                    let message = format!("failed polling capture engine: {err}");
+                    emit_failed(&process.events, Some(process.session_id), message.clone());
+                    return Err(RecorderError::Backend(message));
+                }
+            };
+
+            if let Some(status) = stopped {
+                break status;
+            }
+
+            if started_waiting.elapsed() >= STOP_TIMEOUT {
+                let _ = process.child.kill();
+                let status = match process.child.wait() {
+                    Ok(status) => status,
+                    Err(err) => {
+                        process.metrics_running.store(false, Ordering::Relaxed);
+                        let message = format!("failed killing stuck capture engine: {err}");
+                        emit_failed(&process.events, Some(process.session_id), message.clone());
+                        return Err(RecorderError::Backend(message));
+                    }
+                };
+                process.metrics_running.store(false, Ordering::Relaxed);
+                emit_exited(&process.events, process.session_id, &status);
+                return Err(RecorderError::Backend(format!(
+                    "capture engine did not stop recording within {}s and was killed with {status}",
+                    STOP_TIMEOUT.as_secs()
+                )));
+            }
+
+            std::thread::sleep(STOP_POLL_INTERVAL);
+        };
+        process.metrics_running.store(false, Ordering::Relaxed);
+        emit_exited(&process.events, process.session_id, &status);
+        if !status.success() {
+            return Err(RecorderError::Backend(format!(
+                "capture engine exited with {status}"
+            )));
+        }
         Ok(())
     }
 
-    fn emit_event(events: &Option<mpsc::Sender<RecorderEvent>>, event: RecorderEvent) {
+    pub fn pause_recording() -> Result<()> {
+        write_active_child_command("pause")
+    }
+
+    pub fn resume_recording() -> Result<()> {
+        write_active_child_command("resume")
+    }
+
+    fn write_active_child_command(command: &str) -> Result<()> {
+        use std::io::Write;
+
+        let child_slot = CHILD.get_or_init(|| Mutex::new(None));
+        let mut child = child_slot.lock().unwrap();
+        let Some(process) = child.as_mut() else {
+            return Err(RecorderError::Backend("no active recording".into()));
+        };
+        let Some(stdin) = process.child.stdin.as_mut() else {
+            return Err(RecorderError::Backend(
+                "capture engine stdin is unavailable".into(),
+            ));
+        };
+
+        stdin
+            .write_all(format!("{command}\n").as_bytes())
+            .map_err(|err| RecorderError::Backend(format!("failed to send {command}: {err}")))
+    }
+
+    fn forward_capture_engine_stderr(
+        session_id: u64,
+        stderr: std::process::ChildStderr,
+        events: Option<std::sync::mpsc::Sender<RecorderEvent>>,
+        startup: Option<mpsc::Sender<StartupSignal>>,
+    ) {
+        let mut startup = startup;
+        let mut did_start = false;
+        let mut first_startup_failure = None;
+
+        for line in BufReader::new(stderr)
+            .lines()
+            .map_while(std::result::Result::ok)
+        {
+            eprintln!("{line}");
+            let is_recording_started = capture_engine_line_is_recording_started(&line);
+            let is_failure = capture_engine_line_is_failure(&line);
+
+            if is_failure && first_startup_failure.is_none() {
+                first_startup_failure = Some(line.clone());
+            }
+            if is_recording_started {
+                did_start = true;
+                signal_startup(&mut startup, StartupSignal::Started);
+            }
+
+            emit(
+                &events,
+                if did_start && is_failure {
+                    RecorderEvent::Failed {
+                        session_id: Some(session_id),
+                        message: line,
+                    }
+                } else {
+                    RecorderEvent::Log {
+                        session_id: Some(session_id),
+                        message: line,
+                    }
+                },
+            );
+        }
+
+        let child_slot = CHILD.get_or_init(|| Mutex::new(None));
+        let Ok(mut child) = child_slot.lock() else {
+            signal_startup(
+                &mut startup,
+                StartupSignal::Failed("failed to inspect capture engine exit status".into()),
+            );
+            return;
+        };
+        let Some(status) = child.as_mut().and_then(|process| {
+            process.child.try_wait().ok().and_then(|status| {
+                if status.is_some() {
+                    process.metrics_running.store(false, Ordering::Relaxed);
+                }
+                status
+            })
+        }) else {
+            if !did_start {
+                signal_startup(
+                    &mut startup,
+                    StartupSignal::Failed(
+                        "capture engine stderr closed before recording started".into(),
+                    ),
+                );
+            }
+            return;
+        };
+        *child = None;
+
+        if !did_start {
+            signal_startup(
+                &mut startup,
+                StartupSignal::Failed(first_startup_failure.unwrap_or_else(|| {
+                    format!("capture engine exited before recording started: {status}")
+                })),
+            );
+            return;
+        }
+
+        emit_exited(&events, session_id, &status);
+    }
+
+    fn signal_startup(startup: &mut Option<mpsc::Sender<StartupSignal>>, signal: StartupSignal) {
+        if let Some(startup) = startup.take() {
+            let _ = startup.send(signal);
+        }
+    }
+
+    fn kill_active_child() -> String {
+        let child_slot = CHILD.get_or_init(|| Mutex::new(None));
+        let Some(mut process) = child_slot.lock().ok().and_then(|mut child| child.take()) else {
+            return String::new();
+        };
+
+        process.metrics_running.store(false, Ordering::Relaxed);
+        let _ = process.child.kill();
+        match process.child.wait() {
+            Ok(status) => format!("; killed capture engine with {status}"),
+            Err(err) => format!("; failed to wait for killed capture engine: {err}"),
+        }
+    }
+
+    fn emit(events: &Option<std::sync::mpsc::Sender<RecorderEvent>>, event: RecorderEvent) {
         if let Some(events) = events {
             let _ = events.send(event);
         }
+    }
+
+    fn emit_failed(
+        events: &Option<mpsc::Sender<RecorderEvent>>,
+        session_id: Option<u64>,
+        message: String,
+    ) {
+        emit(
+            events,
+            RecorderEvent::Failed {
+                session_id,
+                message,
+            },
+        );
+    }
+
+    fn emit_exited(
+        events: &Option<mpsc::Sender<RecorderEvent>>,
+        session_id: u64,
+        status: &std::process::ExitStatus,
+    ) {
+        emit(
+            events,
+            RecorderEvent::Exited {
+                session_id,
+                success: status.success(),
+                status: status.to_string(),
+            },
+        );
+    }
+
+    fn spawn_metrics_thread(
+        session_id: u64,
+        output_path: std::path::PathBuf,
+        running: Arc<AtomicBool>,
+        events: Option<std::sync::mpsc::Sender<RecorderEvent>>,
+    ) {
+        std::thread::spawn(move || {
+            let started_at = Instant::now();
+            while running.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                let elapsed_secs = started_at.elapsed().as_secs();
+                if elapsed_secs == 0 {
+                    continue;
+                }
+
+                let output_bytes = std::fs::metadata(&output_path)
+                    .map(|metadata| metadata.len())
+                    .unwrap_or_default();
+                let estimated_bitrate_mbps =
+                    output_bytes as f32 * 8. / elapsed_secs as f32 / 1_000_000.;
+
+                emit(
+                    &events,
+                    RecorderEvent::Metrics {
+                        session_id,
+                        metrics: RecorderMetrics {
+                            elapsed_secs,
+                            output_bytes,
+                            estimated_bitrate_mbps,
+                        },
+                    },
+                );
+            }
+        });
+    }
+
+    fn capture_engine_line_is_failure(line: &str) -> bool {
+        line.contains("recording failed")
+            || line.contains("capture-engine: error:")
+            || line.contains("capture-engine: unsupported")
+            || line.contains("timed out")
+            || line.contains("not found")
+            || line.contains("no display")
+    }
+
+    fn capture_engine_line_is_recording_started(line: &str) -> bool {
+        line.contains("capture-engine: recording started")
+    }
+
+    fn run_permission_command(arg: &str) -> Result<ScreenRecordingPermissionStatus> {
+        let output = run_capture_engine_command(&[arg], "screen recording permission check")?;
+
+        if !output.status.success() {
+            return Err(RecorderError::Backend(format!(
+                "screen recording permission check failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+
+        match String::from_utf8_lossy(&output.stdout).trim() {
+            "granted" => Ok(ScreenRecordingPermissionStatus::Granted),
+            "missing" => Ok(ScreenRecordingPermissionStatus::Missing),
+            status => Err(RecorderError::Backend(format!(
+                "unknown screen recording permission status: {status}"
+            ))),
+        }
+    }
+
+    fn run_capture_engine_command(args: &[&str], label: &str) -> Result<Output> {
+        let mut child = Command::new(capture_engine_path()?)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|err| RecorderError::Backend(format!("{label} failed to start: {err}")))?;
+        let started_at = Instant::now();
+
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => {
+                    return child.wait_with_output().map_err(|err| {
+                        RecorderError::Backend(format!(
+                            "{label} failed to read capture engine output: {err}"
+                        ))
+                    });
+                }
+                Ok(None) if started_at.elapsed() >= CAPTURE_ENGINE_COMMAND_TIMEOUT => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(RecorderError::Backend(format!(
+                        "{label} timed out after {}s; killed capture engine",
+                        CAPTURE_ENGINE_COMMAND_TIMEOUT.as_secs()
+                    )));
+                }
+                Ok(None) => std::thread::sleep(STOP_POLL_INTERVAL),
+                Err(err) => {
+                    return Err(RecorderError::Backend(format!(
+                        "{label} failed while waiting for capture engine: {err}"
+                    )));
+                }
+            }
+        }
+    }
+
+    fn capture_engine_path() -> Result<PathBuf> {
+        std::env::var_os("WREC_CAPTURE_ENGINE_PATH")
+            .or_else(|| std::env::var_os("WREC_HELPER_PATH"))
+            .map(PathBuf::from)
+            .filter(|path| path.is_file())
+            .or_else(packaged_capture_engine_path)
+            .or_else(cargo_capture_engine_path)
+            .ok_or_else(|| {
+                RecorderError::Backend(format!(
+                    "{} was not found next to the daemon executable or in Cargo build output",
+                    capture_engine_file_name()
+                ))
+            })
+    }
+
+    fn packaged_capture_engine_path() -> Option<PathBuf> {
+        std::env::current_exe()
+            .ok()
+            .as_deref()
+            .and_then(sibling_capture_engine_path)
+    }
+
+    fn sibling_capture_engine_path(exe_path: &Path) -> Option<PathBuf> {
+        exe_path
+            .parent()
+            .map(|dir| dir.join(capture_engine_file_name()))
+            .filter(|path| path.is_file())
+    }
+
+    fn cargo_capture_engine_path() -> Option<PathBuf> {
+        option_env!("WREC_CAPTURE_ENGINE_PATH")
+            .or(option_env!("WREC_HELPER_PATH"))
+            .map(PathBuf::from)
+            .filter(|path| path.is_file())
+            .or_else(|| {
+                let current = std::env::current_exe().ok()?;
+                let dir = current.parent()?;
+                if dir.file_name().is_some_and(|name| name == "deps") {
+                    dir.parent()
+                        .map(|profile| profile.join(capture_engine_file_name()))
+                } else {
+                    Some(dir.join(capture_engine_file_name()))
+                }
+            })
+            .filter(|path| path.is_file())
+    }
+
+    fn capture_engine_file_name() -> String {
+        format!("{CAPTURE_ENGINE_BASENAME}{}", std::env::consts::EXE_SUFFIX)
     }
 }
 
 #[cfg(not(target_os = "windows"))]
 mod platform {
     use super::*;
-    use std::sync::{atomic::AtomicBool, Arc};
 
-    pub fn set_paused(_paused: bool) {}
-
-    pub fn list_targets() -> Result<Vec<CaptureTarget>> {
-        Err(RecorderError::Backend("wrec only supports Windows".into()))
+    pub fn screen_recording_permission_status() -> Result<ScreenRecordingPermissionStatus> {
+        Err(RecorderError::Backend(
+            "wrec Windows recorder only supports Windows".into(),
+        ))
     }
 
-    pub fn start_capture(
+    pub fn request_screen_recording_permission() -> Result<ScreenRecordingPermissionStatus> {
+        Err(RecorderError::Backend(
+            "wrec Windows recorder only supports Windows".into(),
+        ))
+    }
+
+    pub fn list_targets() -> Result<Vec<CaptureTarget>> {
+        Err(RecorderError::Backend(
+            "wrec Windows recorder only supports Windows".into(),
+        ))
+    }
+
+    pub fn start_recording(
         _session_id: u64,
-        _target: &CaptureTarget,
-        _settings: &RecorderSettings,
-        _output_path: &std::path::PathBuf,
+        _target: CaptureTarget,
+        _settings: RecorderSettings,
+        _output_path: std::path::PathBuf,
         _events: Option<std::sync::mpsc::Sender<RecorderEvent>>,
-    ) -> Result<(std::thread::JoinHandle<()>, Arc<AtomicBool>)> {
-        Err(RecorderError::Backend("wrec only supports Windows".into()))
+    ) -> Result<RecordingSession> {
+        Err(RecorderError::Backend(
+            "wrec Windows recorder only supports Windows".into(),
+        ))
+    }
+
+    pub fn stop_recording() -> Result<()> {
+        Err(RecorderError::Backend(
+            "wrec Windows recorder only supports Windows".into(),
+        ))
+    }
+
+    pub fn pause_recording() -> Result<()> {
+        Err(RecorderError::Backend(
+            "wrec Windows recorder only supports Windows".into(),
+        ))
+    }
+
+    pub fn resume_recording() -> Result<()> {
+        Err(RecorderError::Backend(
+            "wrec Windows recorder only supports Windows".into(),
+        ))
     }
 }
 
@@ -429,11 +778,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_recorder_has_no_active_session() {
+    fn new_recorder_does_not_own_an_active_session() {
         let (tx, _rx) = std::sync::mpsc::channel();
         let recorder = WindowsRecorder::new(tx);
 
-        assert!(recorder.active.is_none());
-        assert!(recorder.capture.is_none());
+        assert!(!recorder.owns_active_session());
+    }
+
+    #[test]
+    fn windows_output_uses_mp4_container_extension() {
+        let settings = RecorderSettings {
+            output_dir: std::path::PathBuf::from("C:\\captures"),
+            ..RecorderSettings::default()
+        };
+
+        assert_eq!(
+            recording_output_path(&settings)
+                .extension()
+                .and_then(|ext| ext.to_str()),
+            Some("mp4")
+        );
     }
 }

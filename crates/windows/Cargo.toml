@@ -5,26 +5,39 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
-[target.'cfg(target_os = "windows")'.dependencies]
-domain = { package = "core", path = "../core" }
-tracing.workspace = true
-windows = { version = "0.58", features = [
-    "Win32_Foundation",
-    "Win32_Graphics_Dxgi",
-    "Win32_Graphics_Direct3D11",
-    "Win32_Graphics_Dxgi_Common",
-    "Win32_Graphics_Direct3D",
-    "Win32_Media_MediaFoundation",
-    "Win32_Media_Audio",
-    "Win32_System_Com",
-    "Win32_System_Threading",
-    "Win32_System_Variant",
-    "Win32_Storage_FileSystem",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Memory",
-    "Win32_System_Ole",
-    "Win32_System_SystemServices",
-] }
+[lib]
+name = "windows_recorder"
+path = "src/lib.rs"
 
-[target.'cfg(not(target_os = "windows"))'.dependencies]
+[[bin]]
+name = "capture-engine"
+path = "src/bin/capture_engine/main.rs"
+
+[dependencies]
 domain = { package = "core", path = "../core" }
+anyhow.workspace = true
+tracing.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-capture = "2.0.0"
+windows = { version = "0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Graphics_Direct3D",
+  "Win32_Media_MediaFoundation",
+  "Win32_Media_Audio",
+  "Win32_Media_KernelStreaming",
+  "Win32_Media_Multimedia",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Threading",
+  "Win32_System_Variant",
+  "Win32_Storage_FileSystem",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
+  "Win32_System_Ole",
+  "Win32_System_SystemServices",
+  "Win32_UI_Shell_PropertiesSystem",
+] }

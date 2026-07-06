@@ -20,15 +20,21 @@ pub(crate) fn env_lock() -> MutexGuard<'static, ()> {
 
 pub(crate) fn isolate_env() -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
         "wrec-test-{}-{}-{}",
         std::process::id(),
         now_ms(),
-        COUNTER.fetch_add(1, Ordering::Relaxed)
+        counter
     ));
     let home = dir.join("home");
     std::env::set_var("WREC_HOME", &home);
     std::env::set_var("WREC_DATA_DIR", dir.join("data"));
+    #[cfg(windows)]
+    std::env::set_var(
+        "WREC_DAEMON_ADDR",
+        format!("127.0.0.1:{}", 39_000 + (counter % 20_000)),
+    );
     home
 }
 

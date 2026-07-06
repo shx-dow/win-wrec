@@ -1,4 +1,5 @@
-use domain::{CaptureSourceKind, CaptureTarget, RecorderError, Result};
+use anyhow::{anyhow, Result};
+use domain::CaptureTarget;
 use windows::Win32::Graphics::Dxgi::*;
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Direct3D11::*;
@@ -8,7 +9,7 @@ use windows::Win32::Foundation::HMODULE;
 use windows::core::Interface;
 
 fn wr<T>(r: windows::core::Result<T>) -> Result<T> {
-    r.map_err(|e| RecorderError::Backend(e.to_string()))
+    r.map_err(|e| anyhow!("{e}"))
 }
 
 pub struct DxgiCapture {
@@ -28,38 +29,11 @@ pub struct FrameData {
     pub pitch: u32,
 }
 
-const FRAME_TIMEOUT: u32 = 100;
-
-pub fn enumerate_targets() -> Result<Vec<CaptureTarget>> {
-    unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok(); }
-    let factory: IDXGIFactory1 = wr(unsafe { CreateDXGIFactory1() })?;
-    let mut targets = Vec::new();
-    let mut ai = 0u32;
-    loop {
-        let Ok(adapter) = (unsafe { factory.EnumAdapters(ai) }) else { break };
-        let desc = match unsafe { adapter.GetDesc() } {
-            Ok(d) => d,
-            Err(_) => { ai += 1; continue; }
-        };
-        let aname = String::from_utf16_lossy(&desc.Description).trim_end_matches('\0').to_string();
-        let mut oi = 0u32;
-        loop {
-            if unsafe { adapter.EnumOutputs(oi) }.is_err() { break; }
-            targets.push(CaptureTarget {
-                id: oi as u64,
-                name: format!("Display {} ({})", oi + 1, aname),
-                kind: CaptureSourceKind::Display,
-            });
-            oi += 1;
-        }
-        ai += 1;
-    }
-    Ok(targets)
-}
+const FRAME_TIMEOUT: u32 = 0;
 
 impl DxgiCapture {
     pub fn new(target: &CaptureTarget) -> Result<Self> {
-        unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok(); }
+        let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
         let factory: IDXGIFactory1 = wr(unsafe { CreateDXGIFactory1() })?;
 
         let mut found_output: Option<IDXGIOutput> = None;
@@ -67,7 +41,7 @@ impl DxgiCapture {
         let ti = target.id as u32;
         let mut ai = 0u32;
         'outer: loop {
-        let Ok(adapter) = (unsafe { factory.EnumAdapters(ai) }) else { break };
+            let Ok(adapter) = (unsafe { factory.EnumAdapters(ai) }) else { break };
             for oi in 0u32.. {
                 let Ok(output) = (unsafe { adapter.EnumOutputs(oi) }) else { break };
                 if oi == ti { found_output = Some(output); found_adapter = Some(adapter); break 'outer; }
@@ -81,19 +55,14 @@ impl DxgiCapture {
             found_output = Some(output);
         }
 
-        let output = found_output.ok_or_else(|| RecorderError::Backend(format!("display {} not found", target.id)))?;
+        let output = found_output.ok_or_else(|| anyhow!("display {} not found", target.id))?;
         let adapter = found_adapter.unwrap();
 
         let output1: IDXGIOutput1 = output.cast()
-            .map_err(|e| RecorderError::Backend(format!("IDXGIOutput1: {e}")))?;
+            .map_err(|e| anyhow!("IDXGIOutput1: {e}"))?;
 
         let (device, context) = Self::create_device(&adapter)?;
-        let duplication = wr(unsafe { output1.DuplicateOutput(&device) }).map_err(|e| {
-            let msg = e.to_string();
-            if msg.contains("0x887a0004") || msg.contains("0x887a0027") {
-                RecorderError::MissingScreenRecordingPermission
-            } else { e }
-        })?;
+        let duplication = wr(unsafe { output1.DuplicateOutput(&device) })?;
 
         let dup_desc = unsafe { duplication.GetDesc() };
         let w = dup_desc.ModeDesc.Width.max(1);
@@ -117,15 +86,15 @@ impl DxgiCapture {
             if let Err(e) = &hr {
                 let code = e.code();
                 if code == windows::Win32::Graphics::Dxgi::DXGI_ERROR_WAIT_TIMEOUT {
-                    return Err(RecorderError::Backend("timeout".into()));
+                    return Err(anyhow!("timeout"));
                 }
-                return Err(RecorderError::Backend(format!("AcquireNextFrame: {e}")));
+                return Err(anyhow!("AcquireNextFrame: {e}"));
             }
-            if fi.LastPresentTime == 0 { let _ = self.duplication.ReleaseFrame(); return Err(RecorderError::Backend("timeout".into())); }
-            let Some(res) = resource else { let _ = self.duplication.ReleaseFrame(); return Err(RecorderError::Backend("no resource".into())); };
+            if fi.LastPresentTime == 0 { let _ = self.duplication.ReleaseFrame(); return Err(anyhow!("timeout")); }
+            let Some(res) = resource else { let _ = self.duplication.ReleaseFrame(); return Err(anyhow!("no resource")); };
 
             let src: ID3D11Texture2D = res.cast()
-                .map_err(|e| { let _ = self.duplication.ReleaseFrame(); RecorderError::Backend(format!("texture: {e}")) })?;
+                .map_err(|e| { let _ = self.duplication.ReleaseFrame(); anyhow!("texture: {e}") })?;
             let mut sd = D3D11_TEXTURE2D_DESC::default();
             src.GetDesc(&mut sd);
             let need_new = self.staging_texture.is_none()
@@ -158,8 +127,8 @@ impl DxgiCapture {
     }
 
     pub fn release_frame(&self) {}
-    pub fn is_timeout(&self, err: &RecorderError) -> bool {
-        matches!(err, RecorderError::Backend(m) if m == "timeout")
+    pub fn is_timeout(&self, err: &anyhow::Error) -> bool {
+        err.to_string() == "timeout"
     }
 
     fn create_device(adapter: &IDXGIAdapter) -> Result<(ID3D11Device, ID3D11DeviceContext)> {
@@ -180,8 +149,8 @@ impl DxgiCapture {
                 Some(&mut context),
             )
         })?;
-        let d = device.ok_or_else(|| RecorderError::Backend("no device".into()))?;
-        let c = context.ok_or_else(|| RecorderError::Backend("no context".into()))?;
+        let d = device.ok_or_else(|| anyhow!("no device"))?;
+        let c = context.ok_or_else(|| anyhow!("no context"))?;
         Ok((d, c))
     }
 }

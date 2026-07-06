@@ -168,7 +168,7 @@ impl Default for RecorderSettings {
         Self {
             source: CaptureSourceKind::Display,
             fps: FrameRate::Fps30,
-            codec: Codec::H264,
+            codec: Codec::Hevc,
             quality: Quality::Balanced,
             resolution: default_resolution(),
             output_dir: dirs_output_dir(),
@@ -202,6 +202,16 @@ fn default_resolution() -> Resolution {
 }
 
 fn dirs_output_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(path) = std::env::var_os("USERPROFILE")
+            .map(PathBuf::from)
+            .map(|home| home.join("Videos").join(recordings_dir_name()))
+        {
+            return path;
+        }
+    }
+
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .map(|home| home.join("Movies").join(recordings_dir_name()))
@@ -317,7 +327,7 @@ mod tests {
 
         assert_eq!(settings.source, CaptureSourceKind::Display);
         assert_eq!(settings.fps, FrameRate::Fps30);
-        assert_eq!(settings.codec, Codec::H264);
+        assert_eq!(settings.codec, Codec::Hevc);
         assert_eq!(settings.quality, Quality::Balanced);
         assert_eq!(settings.resolution, Resolution::R1080p);
         assert!(settings.include_cursor);

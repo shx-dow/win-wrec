@@ -1,10 +1,10 @@
-use domain::{RecorderError, Result};
+use anyhow::{anyhow, Result};
 use std::mem;
 use windows::Win32::Media::Audio::*;
 use windows::Win32::System::Com::*;
 
 fn wr<T>(r: windows::core::Result<T>) -> Result<T> {
-    r.map_err(|e| RecorderError::Backend(e.to_string()))
+    r.map_err(|e| anyhow!("{e}"))
 }
 
 const REFTIMES_PER_SEC: i64 = 10_000_000;
@@ -30,7 +30,7 @@ impl WasapiCapture {
             return Ok(Self { client: None, capture_client: None, wave_format_bytes: None, buffer_frames: 0 });
         }
 
-        unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok(); }
+        let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
 
         let enumerator: IMMDeviceEnumerator = wr(unsafe {
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_INPROC_SERVER)
@@ -70,7 +70,7 @@ impl WasapiCapture {
         let fmt_ref = unsafe { &*fmt };
         let sr = fmt_ref.nSamplesPerSec;
         let ch = fmt_ref.nChannels;
-        tracing::info!(sample_rate = sr, channels = ch, "WASAPI capture started");
+        eprintln!("capture-engine: system audio started sample_rate={sr} channels={ch}");
 
         Ok(Self { client: Some(client), capture_client: Some(capture_client), wave_format_bytes: Some(wave_format_bytes), buffer_frames })
     }
@@ -148,9 +148,7 @@ impl WasapiCapture {
             let is_float = fmt_ref.wFormatTag == 3 || (fmt_ref.wFormatTag == 65534 && fmt_ref.wBitsPerSample == 32);
 
             let (data, bits_per_sample) = if is_float {
-                let src = unsafe {
-                    std::slice::from_raw_parts(raw_data.as_ptr() as *const f32, raw_data.len() / 4)
-                };
+                let src = std::slice::from_raw_parts(raw_data.as_ptr() as *const f32, raw_data.len() / 4);
                 let mut pcm = Vec::with_capacity(src.len() * 2);
                 for &f in src {
                     let sample = if f >= 1.0 { 32767i16 } else if f <= -1.0 { -32768i16 } else { (f * 32768.0) as i16 };

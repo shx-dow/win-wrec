@@ -10,16 +10,12 @@ const JOB_EVENTS_NAME: &str = "job-events.jsonl";
 pub fn wrec_home() -> PathBuf {
     std::env::var_os("WREC_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".wrec")))
+        .or_else(default_wrec_home)
         .unwrap_or_else(|| PathBuf::from(".wrec"))
 }
 
 pub fn socket_path() -> PathBuf {
     wrec_home().join(SOCKET_NAME)
-}
-
-pub fn daemon_addr() -> String {
-    std::env::var("WREC_DAEMON_ADDR").unwrap_or_else(|_| "127.0.0.1:9842".to_string())
 }
 
 pub fn daemon_log_path() -> PathBuf {
@@ -35,4 +31,21 @@ pub fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(target_os = "windows")]
+fn default_wrec_home() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .map(|dir| dir.join("Wrec"))
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .map(PathBuf::from)
+                .map(|home| home.join(".wrec"))
+        })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn default_wrec_home() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".wrec"))
 }

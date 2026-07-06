@@ -1,11 +1,12 @@
-use domain::{Codec, Quality, RecorderError, Result};
+use anyhow::{anyhow, Result};
+use domain::{Codec, Quality};
 use std::path::Path;
 use std::ptr;
 use windows::core::GUID;
 use windows::Win32::Media::MediaFoundation::*;
 
 fn wr<T>(r: windows::core::Result<T>) -> Result<T> {
-    r.map_err(|e| RecorderError::Backend(e.to_string()))
+    r.map_err(|e| anyhow!("{e}"))
 }
 
 pub struct VideoMediaType {
@@ -48,7 +49,7 @@ impl MfEncoder {
         codec: Codec,
     ) -> Result<Self> {
         if wr(unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) }).is_err() {
-            return Err(RecorderError::Backend("MFStartup failed".into()));
+            return Err(anyhow!("MFStartup failed"));
         }
 
         let output_path_str = output_path.to_string_lossy();
@@ -92,7 +93,7 @@ impl MfEncoder {
         let video_input_type: IMFMediaType = {
             let mt = wr(unsafe { MFCreateMediaType() })?;
             wr(unsafe { mt.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video) })?;
-            wr(unsafe { mt.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12) })?;
+            wr(unsafe { mt.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32) })?;
             Self::set_attribute_size(&mt, &MF_MT_FRAME_SIZE, width, height)?;
             Self::set_attribute_ratio(&mt, &MF_MT_FRAME_RATE, fps, 1)?;
             wr(unsafe { mt.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32) })?;
@@ -108,8 +109,6 @@ impl MfEncoder {
         };
 
         wr(unsafe { sink_writer.BeginWriting() })?;
-
-        tracing::info!(width, height, fps, bitrate, ?codec, ?quality, "MF encoder started");
 
         Ok(Self {
             sink_writer: Some(sink_writer),
@@ -128,25 +127,31 @@ impl MfEncoder {
 
     pub fn write_video(&mut self, frame: &super::dxgi::FrameData) -> Result<()> {
         let sink_writer = self.sink_writer.as_ref()
-            .ok_or_else(|| RecorderError::Backend("encoder finalized".into()))?;
+            .ok_or_else(|| anyhow!("encoder finalized"))?;
 
         let now = std::time::Instant::now();
         let elapsed = self.video_start_time.get_or_insert(now).elapsed();
         let sample_time = (elapsed.as_secs() as i64) * 10_000_000 + (elapsed.subsec_nanos() as i64) / 100;
         let sample_duration = 10_000_000 / self.fps as i64;
 
-        let nv12_data = bgra_to_nv12(&frame.data, frame.width, frame.height, frame.pitch);
+        let row_bytes = (frame.width * 4) as usize;
+        let total = row_bytes * frame.height as usize;
+        let mut bgra = Vec::with_capacity(total);
+        for y in (0..frame.height as usize).rev() {
+            let off = y * frame.pitch as usize;
+            bgra.extend_from_slice(&frame.data[off..off + row_bytes]);
+        }
 
         let sample = {
             let s = wr(unsafe { MFCreateSample() })?;
-            let buffer = wr(unsafe { MFCreateMemoryBuffer(nv12_data.len() as u32) })?;
+            let buffer = wr(unsafe { MFCreateMemoryBuffer(bgra.len() as u32) })?;
             unsafe {
                 let mut byte_buffer: *mut u8 = ptr::null_mut();
                 let mut max_len: u32 = 0;
                 let mut cur_len: u32 = 0;
                 wr(buffer.Lock(&mut byte_buffer, Some(&mut max_len), Some(&mut cur_len)))?;
-                ptr::copy_nonoverlapping(nv12_data.as_ptr(), byte_buffer, nv12_data.len());
-                wr(buffer.SetCurrentLength(nv12_data.len() as u32))?;
+                ptr::copy_nonoverlapping(bgra.as_ptr(), byte_buffer, bgra.len());
+                wr(buffer.SetCurrentLength(bgra.len() as u32))?;
                 wr(buffer.Unlock())?;
             }
             wr(unsafe { s.AddBuffer(&buffer) })?;
@@ -163,7 +168,7 @@ impl MfEncoder {
     pub fn write_audio(&mut self, samples: &super::audio::AudioSamples) -> Result<()> {
         let Some(audio_stream) = self.audio_stream_index else { return Ok(()) };
         let sink_writer = self.sink_writer.as_ref()
-            .ok_or_else(|| RecorderError::Backend("encoder finalized".into()))?;
+            .ok_or_else(|| anyhow!("encoder finalized"))?;
 
         let frame_size = (samples.bits_per_sample as u64 / 8) * samples.channels as u64;
         let sample_rate = samples.sample_rate;
@@ -206,7 +211,6 @@ impl MfEncoder {
         }
 
         unsafe { MFShutdown().ok(); }
-        tracing::info!(frames = self.video_sample_count, "MF encoder finalized");
         Ok(())
     }
 
@@ -214,7 +218,7 @@ impl MfEncoder {
         unsafe {
             let mut attrs: Option<IMFAttributes> = None;
             wr(MFCreateAttributes(&mut attrs, 2))?;
-            let attrs = attrs.ok_or_else(|| RecorderError::Backend("no MF attributes".into()))?;
+            let attrs = attrs.ok_or_else(|| anyhow!("no MF attributes"))?;
             let _ = attrs.SetUINT32(&MF_READWRITE_DISABLE_CONVERTERS, 0);
             let _ = attrs.SetUINT32(&MF_SINK_WRITER_DISABLE_THROTTLING, 1);
             Ok(attrs)
@@ -284,6 +288,7 @@ impl Drop for MfEncoder {
     }
 }
 
+#[allow(dead_code)]
 pub fn bgra_to_nv12(bgra: &[u8], width: u32, height: u32, _pitch: u32) -> Vec<u8> {
     let y_plane_size = (width * height) as usize;
     let uv_plane_size = ((width / 2) * (height / 2) * 2) as usize;

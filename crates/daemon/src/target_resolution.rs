@@ -158,6 +158,7 @@ fn app_name(target: &CaptureTarget) -> &str {
     target
         .name
         .split_once(" \u{2014} ")
+        .or_else(|| target.name.split_once(" - "))
         .map(|(app, _)| app)
         .unwrap_or(&target.name)
 }

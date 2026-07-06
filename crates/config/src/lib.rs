@@ -102,6 +102,32 @@ fn write_config(path: &Path, config: &AppConfig) -> std::io::Result<()> {
     fs::write(path, json)
 }
 
+#[cfg(target_os = "macos")]
+fn default_wrec_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| {
+            home.join("Library")
+                .join("Application Support")
+                .join(APP_DATA_DIR_NAME)
+        })
+        .unwrap_or_else(|| Path::new(".").join(APP_DATA_DIR_NAME))
+}
+
+#[cfg(target_os = "windows")]
+fn default_wrec_dir() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .map(|dir| dir.join(APP_DATA_DIR_NAME))
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .map(PathBuf::from)
+                .map(|home| home.join(".wrec"))
+        })
+        .unwrap_or_else(|| Path::new(".").join(APP_DATA_DIR_NAME))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn default_wrec_dir() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -110,8 +136,7 @@ fn default_wrec_dir() -> PathBuf {
 }
 
 fn legacy_config_paths() -> Vec<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
+    home_dir()
         .map(|home| {
             let mut paths = legacy_app_support_config_paths(&home);
             paths.extend([
@@ -124,8 +149,46 @@ fn legacy_config_paths() -> Vec<PathBuf> {
         .unwrap_or_else(|| vec![Path::new(".").join("wrec.json")])
 }
 
+#[cfg(target_os = "windows")]
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("USERPROFILE").map(PathBuf::from)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+#[cfg(target_os = "macos")]
+fn legacy_app_support_config_paths(home: &Path) -> Vec<PathBuf> {
+    let app_support = home.join("Library").join("Application Support");
+    let mut names = vec!["Wrec Dev".to_string()];
+    let runtime_name = runtime_app_name();
+    if runtime_name != APP_DATA_DIR_NAME && runtime_name != "Wrec Dev" {
+        names.push(runtime_name);
+    }
+
+    names
+        .into_iter()
+        .map(|name| app_support.join(name).join("config.json"))
+        .collect()
+}
+
+#[cfg(not(target_os = "macos"))]
 fn legacy_app_support_config_paths(_: &Path) -> Vec<PathBuf> {
     Vec::new()
+}
+
+#[cfg(target_os = "macos")]
+fn runtime_app_name() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| {
+            path.ancestors()
+                .filter_map(|path| path.file_name()?.to_str())
+                .find_map(|name| name.strip_suffix(".app").map(ToOwned::to_owned))
+        })
+        .unwrap_or_else(|| "Wrec".to_string())
 }
 
 #[cfg(test)]
