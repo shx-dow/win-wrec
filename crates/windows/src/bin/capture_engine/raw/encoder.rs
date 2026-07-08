@@ -35,8 +35,6 @@ pub struct MfEncoder {
     started: bool,
     finalized: bool,
     recording_start: std::time::Instant,
-    first_pts: Option<i64>,
-    audio_time: i64,
 }
 
 impl MfEncoder {
@@ -47,6 +45,7 @@ impl MfEncoder {
         fps: u32,
         quality: Quality,
         codec: Codec,
+        recording_start: std::time::Instant,
     ) -> Result<Self> {
         if wr(unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) }).is_err() {
             return Err(anyhow!("MFStartup failed"));
@@ -84,7 +83,9 @@ impl MfEncoder {
             Self::set_attribute_size(&mt, &MF_MT_FRAME_SIZE, width, height)?;
             Self::set_attribute_ratio(&mt, &MF_MT_FRAME_RATE, fps, 1)?;
             wr(unsafe { mt.SetUINT32(&MF_MT_AVG_BITRATE, bitrate) })?;
-            wr(unsafe { mt.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32) })?;
+            wr(unsafe {
+                mt.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)
+            })?;
             mt
         };
 
@@ -96,7 +97,9 @@ impl MfEncoder {
             wr(unsafe { mt.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32) })?;
             Self::set_attribute_size(&mt, &MF_MT_FRAME_SIZE, width, height)?;
             Self::set_attribute_ratio(&mt, &MF_MT_FRAME_RATE, fps, 1)?;
-            wr(unsafe { mt.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32) })?;
+            wr(unsafe {
+                mt.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)
+            })?;
             mt
         };
 
@@ -119,22 +122,19 @@ impl MfEncoder {
             fps,
             started: true,
             finalized: false,
-            recording_start: std::time::Instant::now(),
-            first_pts: None,
-            audio_time: 0,
+            recording_start,
         })
     }
 
     pub fn write_video(&mut self, frame: &super::dxgi::FrameData) -> Result<()> {
-        let sink_writer = self.sink_writer.as_ref()
+        let sink_writer = self
+            .sink_writer
+            .as_ref()
             .ok_or_else(|| anyhow!("encoder finalized"))?;
 
-        let now = std::time::Instant::now();
-        let elapsed = now - self.recording_start;
-        let raw_pts = (elapsed.as_secs() as i64) * 10_000_000 + (elapsed.subsec_nanos() as i64) / 100;
-        let first_pts = *self.first_pts.get_or_insert(raw_pts);
-        let sample_time = raw_pts - first_pts;
         let sample_duration = 10_000_000 / self.fps as i64;
+        let now = std::time::Instant::now();
+        let sample_time = (now - self.recording_start).as_nanos() as i64 / 100;
 
         let row_bytes = (frame.width * 4) as usize;
         let total = row_bytes * frame.height as usize;
@@ -172,51 +172,21 @@ impl MfEncoder {
         Ok(())
     }
 
-    pub fn write_audio(&mut self, samples: &super::audio::AudioSamples, timestamp: i64) -> Result<()> {
-        let Some(audio_stream) = self.audio_stream_index else { return Ok(()) };
-        let sink_writer = self.sink_writer.as_ref()
-            .ok_or_else(|| anyhow!("encoder finalized"))?;
 
-        let frame_size = (samples.bits_per_sample as u64 / 8) * samples.channels as u64;
-        let sample_rate = samples.sample_rate;
-
-        let sample_duration = if frame_size > 0 && sample_rate > 0 {
-            (samples.data.len() as i64 * 10_000_000) / (frame_size as i64 * sample_rate as i64)
-        } else {
-            0i64
-        };
-
-        let sample = {
-            let s = wr(unsafe { MFCreateSample() })?;
-            let buffer = wr(unsafe { MFCreateMemoryBuffer(samples.data.len() as u32) })?;
-            unsafe {
-                let mut byte_buffer: *mut u8 = ptr::null_mut();
-                let mut max_len: u32 = 0;
-                let mut cur_len: u32 = 0;
-                wr(buffer.Lock(&mut byte_buffer, Some(&mut max_len), Some(&mut cur_len)))?;
-                ptr::copy_nonoverlapping(samples.data.as_ptr(), byte_buffer, samples.data.len());
-                wr(buffer.SetCurrentLength(samples.data.len() as u32))?;
-                wr(buffer.Unlock())?;
-            }
-            wr(unsafe { s.AddBuffer(&buffer) })?;
-            wr(unsafe { s.SetSampleTime(timestamp) })?;
-            wr(unsafe { s.SetSampleDuration(sample_duration) })?;
-            s
-        };
-
-        wr(unsafe { sink_writer.WriteSample(audio_stream, &sample) })?;
-        Ok(())
-    }
 
     pub fn finalize(&mut self) -> Result<()> {
-        if self.finalized { return Ok(()); }
+        if self.finalized {
+            return Ok(());
+        }
         self.finalized = true;
 
         if let Some(sink_writer) = self.sink_writer.take() {
             wr(unsafe { sink_writer.Finalize() })?;
         }
 
-        unsafe { MFShutdown().ok(); }
+        unsafe {
+            MFShutdown().ok();
+        }
         Ok(())
     }
 
@@ -248,19 +218,54 @@ impl MfEncoder {
             let mt = wr(unsafe { MFCreateMediaType() })?;
             wr(unsafe { mt.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio) })?;
             wr(unsafe { mt.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_PCM) })?;
+            wr(unsafe { mt.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16u32) })?;
             wr(unsafe { mt.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, audio.sample_rate) })?;
             wr(unsafe { mt.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, audio.channels as u32) })?;
-            wr(unsafe { mt.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16u32) })?;
             let block_align = 2 * audio.channels as u32;
             wr(unsafe { mt.SetUINT32(&MF_MT_AUDIO_BLOCK_ALIGNMENT, block_align) })?;
             let avg_bytes = audio.sample_rate * audio.channels as u32 * 2;
             wr(unsafe { mt.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, avg_bytes) })?;
-            wr(unsafe { mt.SetUINT32(&MF_MT_ALL_SAMPLES_INDEPENDENT, 1) })?;
             mt
         };
-
         wr(unsafe { sink_writer.SetInputMediaType(stream_index, &input_type, None) })?;
+
         Ok(stream_index)
+    }
+
+    pub fn write_audio(
+        &mut self,
+        pcm_data: &[u8],
+        timestamp: i64,
+        duration: i64,
+    ) -> Result<()> {
+        let Some(audio_stream) = self.audio_stream_index else {
+            return Ok(());
+        };
+        let sink_writer = self
+            .sink_writer
+            .as_ref()
+            .ok_or_else(|| anyhow!("encoder finalized"))?;
+
+        let sample = {
+            let s = wr(unsafe { MFCreateSample() })?;
+            let buffer = wr(unsafe { MFCreateMemoryBuffer(pcm_data.len() as u32) })?;
+            unsafe {
+                let mut byte_buffer: *mut u8 = ptr::null_mut();
+                let mut max_len: u32 = 0;
+                let mut cur_len: u32 = 0;
+                wr(buffer.Lock(&mut byte_buffer, Some(&mut max_len), Some(&mut cur_len)))?;
+                ptr::copy_nonoverlapping(pcm_data.as_ptr(), byte_buffer, pcm_data.len());
+                wr(buffer.SetCurrentLength(pcm_data.len() as u32))?;
+                wr(buffer.Unlock())?;
+            }
+            wr(unsafe { s.AddBuffer(&buffer) })?;
+            wr(unsafe { s.SetSampleTime(timestamp) })?;
+            wr(unsafe { s.SetSampleDuration(duration) })?;
+            s
+        };
+
+        wr(unsafe { sink_writer.WriteSample(audio_stream, &sample) })?;
+        Ok(())
     }
 
     fn set_attribute_size(mt: &IMFMediaType, key: &GUID, w: u32, h: u32) -> Result<()> {
@@ -318,14 +323,20 @@ impl MfEncoder {
 
         for fy in start_y..end_y {
             let screen_y = (cy + fy) as i32;
-            if screen_y < 0 || screen_y >= fh { continue; }
+            if screen_y < 0 || screen_y >= fh {
+                continue;
+            }
             let frame_y = (fh - 1 - screen_y) as usize;
             for fx in start_x..end_x {
                 let screen_x = (cx + fx) as i32;
-                if screen_x < 0 || screen_x >= fw { continue; }
+                if screen_x < 0 || screen_x >= fw {
+                    continue;
+                }
                 let frame_x = screen_x as usize;
                 let src_off = fy as usize * bpitch + fx as usize * 4;
-                if src_off + 3 >= cursor.bitmap.len() { continue; }
+                if src_off + 3 >= cursor.bitmap.len() {
+                    continue;
+                }
 
                 let cb = cursor.bitmap[src_off] as u32;
                 let cg = cursor.bitmap[src_off + 1] as u32;
@@ -336,7 +347,8 @@ impl MfEncoder {
 
                 if cursor.cursor_type == PT_COLOR {
                     if ca >= 255 {
-                        bgra[dst_off..dst_off + 4].copy_from_slice(&[cb as u8, cg as u8, cr as u8, 255]);
+                        bgra[dst_off..dst_off + 4]
+                            .copy_from_slice(&[cb as u8, cg as u8, cr as u8, 255]);
                     } else if ca > 0 {
                         let fa = 255 - ca;
                         bgra[dst_off] = ((cb * ca + bgra[dst_off] as u32 * fa) / 255) as u8;
@@ -345,7 +357,8 @@ impl MfEncoder {
                     }
                 } else if cursor.cursor_type == PT_MASKED_COLOR {
                     if !(cr == 255 && cg == 0 && cb == 255) {
-                        bgra[dst_off..dst_off + 4].copy_from_slice(&[cb as u8, cg as u8, cr as u8, 255]);
+                        bgra[dst_off..dst_off + 4]
+                            .copy_from_slice(&[cb as u8, cg as u8, cr as u8, 255]);
                     }
                 }
             }
@@ -357,7 +370,9 @@ unsafe impl Send for MfEncoder {}
 
 impl Drop for MfEncoder {
     fn drop(&mut self) {
-        if self.started { let _ = self.finalize(); }
+        if self.started {
+            let _ = self.finalize();
+        }
     }
 }
 
@@ -372,7 +387,9 @@ pub fn bgra_to_nv12(bgra: &[u8], width: u32, height: u32, _pitch: u32) -> Vec<u8
     for y in 0..height {
         for x in 0..width {
             let src_idx = ((y * width + x) * 4) as usize;
-            if src_idx + 3 >= bgra.len() { continue; }
+            if src_idx + 3 >= bgra.len() {
+                continue;
+            }
             let b = bgra[src_idx] as i32;
             let g = bgra[src_idx + 1] as i32;
             let r = bgra[src_idx + 2] as i32;
@@ -400,7 +417,8 @@ mod tests {
 
     #[test]
     fn bgra_to_nv12_small() {
-        let w = 4u32; let h = 4u32;
+        let w = 4u32;
+        let h = 4u32;
         let bgra = vec![128u8; (w * h * 4) as usize];
         let nv12 = bgra_to_nv12(&bgra, w, h, w * 4);
         assert_eq!(nv12.len(), (w * h + (w / 2) * (h / 2) * 2) as usize);

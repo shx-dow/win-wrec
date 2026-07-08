@@ -1,12 +1,12 @@
 use anyhow::{anyhow, Result};
 use domain::CaptureTarget;
-use windows::Win32::Graphics::Dxgi::*;
-use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
-use windows::Win32::Graphics::Direct3D11::*;
-use windows::Win32::Graphics::Direct3D::{D3D_FEATURE_LEVEL, D3D_DRIVER_TYPE};
-use windows::Win32::System::Com::*;
-use windows::Win32::Foundation::HMODULE;
 use windows::core::Interface;
+use windows::Win32::Foundation::HMODULE;
+use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE, D3D_FEATURE_LEVEL};
+use windows::Win32::Graphics::Direct3D11::*;
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
+use windows::Win32::Graphics::Dxgi::*;
+use windows::Win32::System::Com::*;
 
 fn wr<T>(r: windows::core::Result<T>) -> Result<T> {
     r.map_err(|e| anyhow!("{e}"))
@@ -63,10 +63,18 @@ impl DxgiCapture {
         let ti = target.id as u32;
         let mut ai = 0u32;
         'outer: loop {
-            let Ok(adapter) = (unsafe { factory.EnumAdapters(ai) }) else { break };
+            let Ok(adapter) = (unsafe { factory.EnumAdapters(ai) }) else {
+                break;
+            };
             for oi in 0u32.. {
-                let Ok(output) = (unsafe { adapter.EnumOutputs(oi) }) else { break };
-                if oi == ti { found_output = Some(output); found_adapter = Some(adapter); break 'outer; }
+                let Ok(output) = (unsafe { adapter.EnumOutputs(oi) }) else {
+                    break;
+                };
+                if oi == ti {
+                    found_output = Some(output);
+                    found_adapter = Some(adapter);
+                    break 'outer;
+                }
             }
             ai += 1;
         }
@@ -80,8 +88,7 @@ impl DxgiCapture {
         let output = found_output.ok_or_else(|| anyhow!("display {} not found", target.id))?;
         let adapter = found_adapter.unwrap();
 
-        let output1: IDXGIOutput1 = output.cast()
-            .map_err(|e| anyhow!("IDXGIOutput1: {e}"))?;
+        let output1: IDXGIOutput1 = output.cast().map_err(|e| anyhow!("IDXGIOutput1: {e}"))?;
 
         let (device, context) = Self::create_device(&adapter)?;
         let duplication = wr(unsafe { output1.DuplicateOutput(&device) })?;
@@ -91,24 +98,47 @@ impl DxgiCapture {
         let h = dup_desc.ModeDesc.Height.max(1);
 
         Ok(Self {
-            device, context, duplication, staging_texture: None, width: w, height: h,
-            cursor_bitmap: Vec::new(), cursor_width: 0, cursor_height: 0, cursor_pitch: 0,
-            cursor_hotspot_x: 0, cursor_hotspot_y: 0, cursor_type: 0,
+            device,
+            context,
+            duplication,
+            staging_texture: None,
+            width: w,
+            height: h,
+            cursor_bitmap: Vec::new(),
+            cursor_width: 0,
+            cursor_height: 0,
+            cursor_pitch: 0,
+            cursor_hotspot_x: 0,
+            cursor_hotspot_y: 0,
+            cursor_type: 0,
         })
     }
 
-    pub fn width(&self) -> u32 { self.width }
-    pub fn height(&self) -> u32 { self.height }
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+    pub fn height(&self) -> u32 {
+        self.height
+    }
 
     pub fn media_type(&self) -> super::encoder::VideoMediaType {
-        super::encoder::VideoMediaType { width: self.width, height: self.height, frame_rate_numerator: 30, frame_rate_denominator: 1 }
+        super::encoder::VideoMediaType {
+            width: self.width,
+            height: self.height,
+            frame_rate_numerator: 30,
+            frame_rate_denominator: 1,
+        }
     }
 
     pub fn acquire_frame(&mut self) -> Result<FrameData> {
         unsafe {
             let mut resource: Option<IDXGIResource> = None;
             let mut fi = DXGI_OUTDUPL_FRAME_INFO::default();
-            let hr = self.duplication.AcquireNextFrame(FRAME_TIMEOUT, &mut fi, &mut resource as *mut Option<IDXGIResource>);
+            let hr = self.duplication.AcquireNextFrame(
+                FRAME_TIMEOUT,
+                &mut fi,
+                &mut resource as *mut Option<IDXGIResource>,
+            );
             if let Err(e) = &hr {
                 let code = e.code();
                 if code == windows::Win32::Graphics::Dxgi::DXGI_ERROR_WAIT_TIMEOUT {
@@ -116,27 +146,53 @@ impl DxgiCapture {
                 }
                 return Err(anyhow!("AcquireNextFrame: {e}"));
             }
-            if fi.LastPresentTime == 0 { let _ = self.duplication.ReleaseFrame(); return Err(anyhow!("timeout")); }
-            let Some(res) = resource else { let _ = self.duplication.ReleaseFrame(); return Err(anyhow!("no resource")); };
+            if fi.LastPresentTime == 0 {
+                let _ = self.duplication.ReleaseFrame();
+                return Err(anyhow!("timeout"));
+            }
+            let Some(res) = resource else {
+                let _ = self.duplication.ReleaseFrame();
+                return Err(anyhow!("no resource"));
+            };
 
-            let src: ID3D11Texture2D = res.cast()
-                .map_err(|e| { let _ = self.duplication.ReleaseFrame(); anyhow!("texture: {e}") })?;
+            let src: ID3D11Texture2D = res.cast().map_err(|e| {
+                let _ = self.duplication.ReleaseFrame();
+                anyhow!("texture: {e}")
+            })?;
             let mut sd = D3D11_TEXTURE2D_DESC::default();
             src.GetDesc(&mut sd);
             let need_new = self.staging_texture.is_none()
-                || self.staging_texture.as_ref().map(|t| { let mut d = D3D11_TEXTURE2D_DESC::default(); t.GetDesc(&mut d); d.Width != sd.Width || d.Height != sd.Height }).unwrap_or(true);
+                || self
+                    .staging_texture
+                    .as_ref()
+                    .map(|t| {
+                        let mut d = D3D11_TEXTURE2D_DESC::default();
+                        t.GetDesc(&mut d);
+                        d.Width != sd.Width || d.Height != sd.Height
+                    })
+                    .unwrap_or(true);
 
             if need_new {
                 let stg = D3D11_TEXTURE2D_DESC {
-                    Width: sd.Width, Height: sd.Height, MipLevels: 1, ArraySize: 1,
+                    Width: sd.Width,
+                    Height: sd.Height,
+                    MipLevels: 1,
+                    ArraySize: 1,
                     Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                    SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                    Usage: D3D11_USAGE_STAGING, BindFlags: 0, CPUAccessFlags: 0x20000, MiscFlags: 0,
+                    SampleDesc: DXGI_SAMPLE_DESC {
+                        Count: 1,
+                        Quality: 0,
+                    },
+                    Usage: D3D11_USAGE_STAGING,
+                    BindFlags: 0,
+                    CPUAccessFlags: 0x20000,
+                    MiscFlags: 0,
                 };
                 let mut tex: Option<ID3D11Texture2D> = None;
                 wr(self.device.CreateTexture2D(&stg, None, Some(&mut tex)))?;
                 self.staging_texture = tex;
-                self.width = sd.Width; self.height = sd.Height;
+                self.width = sd.Width;
+                self.height = sd.Height;
             }
 
             let cursor = self.update_cursor(&fi)?;
@@ -145,12 +201,20 @@ impl DxgiCapture {
             self.context.CopyResource(stg, &src);
             let _ = self.duplication.ReleaseFrame();
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-            wr(self.context.Map(stg, 0, D3D11_MAP_READ, 0, Some(&mut mapped)))?;
+            wr(self
+                .context
+                .Map(stg, 0, D3D11_MAP_READ, 0, Some(&mut mapped)))?;
             let pitch = mapped.RowPitch;
             let total = (pitch * self.height) as usize;
             let data = std::slice::from_raw_parts(mapped.pData as *const u8, total).to_vec();
             self.context.Unmap(stg, 0);
-            Ok(FrameData { data, width: self.width, height: self.height, pitch, cursor })
+            Ok(FrameData {
+                data,
+                width: self.width,
+                height: self.height,
+                pitch,
+                cursor,
+            })
         }
     }
 
@@ -200,8 +264,12 @@ impl DxgiCapture {
     }
 
     fn create_device(adapter: &IDXGIAdapter) -> Result<(ID3D11Device, ID3D11DeviceContext)> {
-        let fl = [D3D_FEATURE_LEVEL(0x0000b000), D3D_FEATURE_LEVEL(0x0000a100),
-                  D3D_FEATURE_LEVEL(0x0000a000), D3D_FEATURE_LEVEL(0x00009200)];
+        let fl = [
+            D3D_FEATURE_LEVEL(0x0000b000),
+            D3D_FEATURE_LEVEL(0x0000a100),
+            D3D_FEATURE_LEVEL(0x0000a000),
+            D3D_FEATURE_LEVEL(0x00009200),
+        ];
         let mut device: Option<ID3D11Device> = None;
         let mut context: Option<ID3D11DeviceContext> = None;
         wr(unsafe {
@@ -224,5 +292,7 @@ impl DxgiCapture {
 }
 
 impl Drop for DxgiCapture {
-    fn drop(&mut self) { let _ = unsafe { self.duplication.ReleaseFrame() }; }
+    fn drop(&mut self) {
+        let _ = unsafe { self.duplication.ReleaseFrame() };
+    }
 }

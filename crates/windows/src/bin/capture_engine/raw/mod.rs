@@ -2,15 +2,15 @@ use anyhow::{Context as AnyhowContext, Result};
 use std::io::BufRead;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Barrier, Mutex, mpsc,
+    mpsc, Arc, Barrier, Mutex,
 };
-use std::time::{Duration, Instant};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::RecordArgs;
 
-mod dxgi;
 mod audio;
+mod dxgi;
 mod encoder;
 
 use dxgi::DxgiCapture;
@@ -39,8 +39,7 @@ pub fn start_recording(args: RecordArgs) -> Result<()> {
         },
     };
 
-    let mut dxgi = DxgiCapture::new(&target)
-        .with_context(|| "DXGI init")?;
+    let mut dxgi = DxgiCapture::new(&target).with_context(|| "DXGI init")?;
     let video_media_type = dxgi.media_type();
 
     let audio_mt = if args.include_system_audio {
@@ -59,6 +58,8 @@ pub fn start_recording(args: RecordArgs) -> Result<()> {
         _ => domain::Quality::Balanced,
     };
 
+    let recording_start = Instant::now();
+
     let encoder = MfEncoder::new(
         &args.output_path,
         &video_media_type,
@@ -66,7 +67,9 @@ pub fn start_recording(args: RecordArgs) -> Result<()> {
         args.fps,
         quality,
         codec,
-    ).with_context(|| "encoder init")?;
+        recording_start,
+    )
+    .with_context(|| "encoder init")?;
     let encoder = Arc::new(Mutex::new(encoder));
 
     let paused = Arc::new(AtomicBool::new(false));
@@ -77,8 +80,8 @@ pub fn start_recording(args: RecordArgs) -> Result<()> {
         let enc = encoder.clone();
         let p = paused.clone();
         let b = barrier.clone();
-        let (handle, thread_running) =
-            audio::spawn_capture_thread(enc, p, b).with_context(|| "spawn audio thread")?;
+        let (handle, thread_running) = audio::spawn_capture_thread(enc, p, b)
+            .with_context(|| "spawn audio thread")?;
         Some((handle, thread_running))
     } else {
         None
@@ -188,7 +191,9 @@ pub fn start_recording(args: RecordArgs) -> Result<()> {
         enc.finalize().with_context(|| "encoder finalize")?;
     }
 
-    unsafe { windows::Win32::System::Com::CoUninitialize(); }
+    unsafe {
+        windows::Win32::System::Com::CoUninitialize();
+    }
 
     Ok(())
 }

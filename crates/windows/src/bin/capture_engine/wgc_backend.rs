@@ -36,13 +36,14 @@ use windows_capture::{
     monitor::Monitor,
     settings::{
         ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
-        GraphicsCaptureItemType, MinimumUpdateIntervalSettings, SecondaryWindowSettings,
-        Settings,
+        GraphicsCaptureItemType, MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
     },
     window::Window,
 };
 
 use crate::RecordArgs;
+
+const REFTIMES_PER_SEC: i64 = 10_000_000;
 
 struct CaptureFlags {
     output_path: std::path::PathBuf,
@@ -122,6 +123,7 @@ impl GraphicsCaptureApiHandler for Capture {
             ContainerSettingsBuilder::new(),
             &flags.output_path,
         )?;
+        let recording_start = Instant::now();
         let encoder = Arc::new(Mutex::new(Some(encoder)));
         let (audio_running, audio_thread) = audio_format
             .map(|format| {
@@ -142,7 +144,7 @@ impl GraphicsCaptureApiHandler for Capture {
             height: flags.height,
             packed_frame: Vec::new(),
             scaled_frame: Vec::new(),
-            started_at: Instant::now(),
+            started_at: recording_start,
             last_metric_at: Instant::now(),
             frame_count: 0,
             dropped_frame_count: 0,
@@ -222,11 +224,10 @@ pub fn is_capture_supported() -> Result<bool> {
 }
 
 pub fn list_targets() -> Result<()> {
-    for (idx, monitor) in
-        Monitor::enumerate()
-            .context("failed to enumerate displays")?
-            .iter()
-            .enumerate()
+    for (idx, monitor) in Monitor::enumerate()
+        .context("failed to enumerate displays")?
+        .iter()
+        .enumerate()
     {
         let id = idx as u64;
         let name = monitor
@@ -445,9 +446,7 @@ fn spawn_audio_capture_thread(
     let thread_running = running.clone();
     let (startup_tx, startup_rx) = mpsc::channel();
     let handle = thread::spawn(move || {
-        if let Err(err) =
-            run_loopback_audio(format, encoder, paused, thread_running, startup_tx)
-        {
+        if let Err(err) = run_loopback_audio(format, encoder, paused, thread_running, startup_tx) {
             eprintln!("capture-engine: audio capture failed: {err}");
         }
     });
@@ -477,7 +476,8 @@ fn run_loopback_audio(
     let mut startup = Some(startup);
     let result = unsafe {
         let should_uninitialize = co_initialize_mta()?;
-        let result = capture_loopback_audio(format, encoder, paused, running, &mut startup);
+        let result =
+            capture_loopback_audio(format, encoder, paused, running, &mut startup);
         if should_uninitialize {
             CoUninitialize();
         }
@@ -507,23 +507,39 @@ unsafe fn capture_loopback_audio(
         format.sample_rate, format.channels, format.bits_per_sample
     );
 
+    let mut base_device_position: Option<u64> = None;
+
     while running.load(Ordering::Relaxed) {
         let mut packet_size = unsafe { capture_client.GetNextPacketSize()? };
         while packet_size > 0 {
             let mut data = std::ptr::null_mut::<u8>();
             let mut frames = 0_u32;
             let mut flags = 0_u32;
+            let mut dev_position = 0u64;
             unsafe {
-                capture_client.GetBuffer(&mut data, &mut frames, &mut flags, None, None)?
+                capture_client.GetBuffer(
+                    &mut data,
+                    &mut frames,
+                    &mut flags,
+                    Some(&mut dev_position),
+                    None,
+                )?
             };
 
             let audio = unsafe { convert_loopback_buffer(data, frames, flags, format) };
             unsafe { capture_client.ReleaseBuffer(frames)? };
 
             if !paused.load(Ordering::Relaxed) && !audio.is_empty() {
+                let ts = if let Some(base) = base_device_position {
+                    let rel = dev_position.saturating_sub(base);
+                    (rel as i64 * REFTIMES_PER_SEC) / format.sample_rate as i64
+                } else {
+                    base_device_position = Some(dev_position);
+                    0i64
+                };
                 let mut encoder = encoder.lock().unwrap();
                 if let Some(encoder) = encoder.as_mut() {
-                    if let Err(err) = encoder.send_audio_buffer(&audio, 0) {
+                    if let Err(err) = encoder.send_audio_buffer(&audio, ts) {
                         eprintln!("capture-engine: failed to send audio buffer: {err}");
                         running.store(false, Ordering::Relaxed);
                         break;
@@ -539,6 +555,8 @@ unsafe fn capture_loopback_audio(
     let _ = unsafe { audio_client.Stop() };
     Ok(())
 }
+
+
 
 unsafe fn open_loopback_capture_client() -> Result<(IAudioClient, IAudioCaptureClient)> {
     let enumerator: IMMDeviceEnumerator =
@@ -586,8 +604,7 @@ unsafe fn parse_wave_format(format: *const WAVEFORMATEX) -> Result<LoopbackAudio
         WAVE_FORMAT_EXTENSIBLE => {
             let extensible =
                 unsafe { std::ptr::read_unaligned(format.cast::<WAVEFORMATEXTENSIBLE>()) };
-            let sub_format =
-                unsafe { std::ptr::addr_of!(extensible.SubFormat).read_unaligned() };
+            let sub_format = unsafe { std::ptr::addr_of!(extensible.SubFormat).read_unaligned() };
             if sub_format == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT {
                 LoopbackSampleKind::Float
             } else if sub_format == KSDATAFORMAT_SUBTYPE_PCM {
@@ -774,9 +791,9 @@ mod tests {
     #[test]
     fn scale_bgra_nearest_picks_source_pixels_by_ratio() {
         let source = [
-            1, 0, 0, 255, 2, 0, 0, 255, 3, 0, 0, 255, 4, 0, 0, 255, 5, 0, 0, 255, 6, 0, 0, 255,
-            7, 0, 0, 255, 8, 0, 0, 255, 9, 0, 0, 255, 10, 0, 0, 255, 11, 0, 0, 255, 12, 0, 0,
-            255, 13, 0, 0, 255, 14, 0, 0, 255, 15, 0, 0, 255, 16, 0, 0, 255,
+            1, 0, 0, 255, 2, 0, 0, 255, 3, 0, 0, 255, 4, 0, 0, 255, 5, 0, 0, 255, 6, 0, 0, 255, 7,
+            0, 0, 255, 8, 0, 0, 255, 9, 0, 0, 255, 10, 0, 0, 255, 11, 0, 0, 255, 12, 0, 0, 255, 13,
+            0, 0, 255, 14, 0, 0, 255, 15, 0, 0, 255, 16, 0, 0, 255,
         ];
         let mut output = Vec::new();
 
