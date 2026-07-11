@@ -52,7 +52,7 @@ impl RecorderEngine for WindowsRecorder {
         settings: RecorderSettings,
     ) -> Result<RecordingSession> {
         let session_id = next_session_id();
-        let output_path = recording_output_path(&settings);
+        let output_path = recording_output_path(&settings, session_id);
         self.emit(RecorderEvent::Starting {
             session_id,
             target: target.clone(),
@@ -148,13 +148,10 @@ fn next_session_id() -> u64 {
     }
 }
 
-fn recording_output_path(settings: &RecorderSettings) -> std::path::PathBuf {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or_default();
-    let filename = format!("wrec-{}.mp4", secs);
+fn recording_output_path(settings: &RecorderSettings, session_id: u64) -> std::path::PathBuf {
+    // Session IDs are monotonic, so two recordings can never overwrite one another
+    // simply because they were started in the same second.
+    let filename = format!("wrec-{session_id}.mp4");
     settings.output_dir.join(filename)
 }
 
@@ -305,6 +302,7 @@ mod platform {
         match startup_rx.recv_timeout(START_TIMEOUT) {
             Ok(StartupSignal::Started) => {}
             Ok(StartupSignal::Failed(message)) => {
+                let _ = kill_active_child();
                 let _ = std::fs::remove_file(&output_path);
                 return Err(RecorderError::Backend(format!(
                     "capture engine failed to start recording: {message}"
@@ -319,6 +317,7 @@ mod platform {
                 )));
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = kill_active_child();
                 let _ = std::fs::remove_file(&output_path);
                 return Err(RecorderError::Backend(
                     "capture engine startup channel closed before recording started".into(),
@@ -793,10 +792,20 @@ mod tests {
         };
 
         assert_eq!(
-            recording_output_path(&settings)
+            recording_output_path(&settings, 42)
                 .extension()
                 .and_then(|ext| ext.to_str()),
             Some("mp4")
+        );
+    }
+
+    #[test]
+    fn recording_output_path_is_unique_per_session() {
+        let settings = RecorderSettings::default();
+
+        assert_ne!(
+            recording_output_path(&settings, 41),
+            recording_output_path(&settings, 42)
         );
     }
 }

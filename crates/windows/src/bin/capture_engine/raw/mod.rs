@@ -147,13 +147,21 @@ pub fn start_recording(args: RecordArgs) -> Result<()> {
             thread::sleep(next_frame_time - now);
         }
         next_frame_time += frame_duration;
+        // A slow capture/encode must drop schedule slots, not spin at full CPU
+        // trying to replay every missed frame deadline.
+        if next_frame_time < Instant::now() {
+            next_frame_time = Instant::now() + frame_duration;
+        }
 
         if paused.load(Ordering::Relaxed) {
             continue;
         }
 
         match dxgi.acquire_frame() {
-            Ok(frame_data) => {
+            Ok(mut frame_data) => {
+                if !args.include_cursor {
+                    frame_data.cursor = None;
+                }
                 if let Ok(mut enc) = encoder.lock() {
                     if let Err(e) = enc.write_video(&frame_data) {
                         eprintln!("capture-engine: video write failed: {e}");
