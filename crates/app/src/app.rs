@@ -113,6 +113,7 @@ pub(crate) struct WrecApp {
     pub(crate) show_nerd_logs: bool,
     pub(crate) logs: VecDeque<String>,
     quit_after_stop: bool,
+    window_capture_excluded: bool,
     pub(crate) source_select: Entity<ControlSelect>,
     pub(crate) target_select: Entity<TargetSelect>,
     pub(crate) codec_select: Entity<ControlSelect>,
@@ -244,6 +245,7 @@ impl WrecApp {
             show_nerd_logs: config.show_nerd_logs,
             logs: VecDeque::new(),
             quit_after_stop: false,
+            window_capture_excluded: false,
             source_select,
             target_select,
             codec_select,
@@ -730,7 +732,7 @@ impl WrecApp {
             return;
         };
 
-        self.start_recording(target, cx);
+        self.start_recording(target, window, cx);
     }
 
     pub(crate) fn on_quit_action(&mut self, _: &Quit, window: &mut Window, cx: &mut Context<Self>) {
@@ -838,13 +840,21 @@ impl WrecApp {
         cx.notify();
     }
 
-    fn start_recording(&mut self, target: CaptureTarget, cx: &mut Context<Self>) {
+    fn start_recording(
+        &mut self,
+        target: CaptureTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.recorder_state = RecorderState::Starting;
         self.status = format!("Starting {}", target.name);
         self.metrics = None;
         self.push_log(format!("target: {}", target.name));
         if self.settings.hide_wrec {
             self.push_log("hiding Wrec from recording");
+            self.set_app_window_capture_excluded(window, true);
+        } else {
+            self.set_app_window_capture_excluded(window, false);
         }
         self.active_job_id = None;
         self.active_job_event_count = 0;
@@ -1026,6 +1036,7 @@ impl WrecApp {
                     cx.notify();
                     return;
                 }
+                self.set_app_window_capture_excluded(window, false);
                 self.active_job_id = None;
                 self.active_job_event_count = 0;
                 self.active_output_path = None;
@@ -1045,6 +1056,7 @@ impl WrecApp {
             }
             AppEvent::JobPolled(Err(message)) => {
                 if self.active_job_id.is_some() {
+                    self.set_app_window_capture_excluded(window, false);
                     self.recorder_state = RecorderState::Failed;
                     self.active_job_id = None;
                     self.active_output_path = None;
@@ -1081,6 +1093,7 @@ impl WrecApp {
                 self.apply_job_snapshot(job, window, cx);
             }
             AppEvent::Stopped(Err(message)) => {
+                self.set_app_window_capture_excluded(window, false);
                 self.active_job_id = None;
                 self.active_job_event_count = 0;
                 self.active_output_path = None;
@@ -1146,6 +1159,7 @@ impl WrecApp {
                 self.status = "Stopping".to_string();
             }
             JobStatus::Completed => {
+                self.set_app_window_capture_excluded(window, false);
                 self.active_job_id = None;
                 self.active_job_event_count = 0;
                 self.active_output_path = None;
@@ -1174,6 +1188,7 @@ impl WrecApp {
                 }
             }
             JobStatus::Failed | JobStatus::Cancelled => {
+                self.set_app_window_capture_excluded(window, false);
                 let message = latest_error_message(&job).unwrap_or_else(|| {
                     if matches!(job.status, JobStatus::Cancelled) {
                         "Recording cancelled".to_string()
@@ -1209,6 +1224,29 @@ impl WrecApp {
         self.active_job_id
             .map(|active_job_id| active_job_id == job_id)
             .unwrap_or(false)
+    }
+
+    fn set_app_window_capture_excluded(&mut self, window: &mut Window, excluded: bool) {
+        if self.window_capture_excluded == excluded {
+            return;
+        }
+
+        match crate::platform::set_window_capture_excluded(window, excluded) {
+            Ok(()) => {
+                self.window_capture_excluded = excluded;
+                self.push_log(if excluded {
+                    "Wrec window excluded from capture"
+                } else {
+                    "Wrec window capture exclusion cleared"
+                });
+            }
+            Err(err) => {
+                self.push_log(format!(
+                    "Wrec window capture exclusion {} failed: {err}",
+                    if excluded { "enable" } else { "clear" }
+                ));
+            }
+        }
     }
 
     fn start_job_poll(&self) {
