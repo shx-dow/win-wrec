@@ -33,11 +33,11 @@ impl WindowsRecorder {
     }
 
     pub fn screen_recording_permission_status(&self) -> Result<ScreenRecordingPermissionStatus> {
-        platform::screen_recording_permission_status()
+        Ok(ScreenRecordingPermissionStatus::Granted)
     }
 
     pub fn request_screen_recording_permission(&self) -> Result<ScreenRecordingPermissionStatus> {
-        platform::request_screen_recording_permission()
+        Ok(ScreenRecordingPermissionStatus::Granted)
     }
 }
 
@@ -186,14 +186,6 @@ mod platform {
 
     static CHILD: OnceLock<Mutex<Option<RecordingProcess>>> = OnceLock::new();
     const CAPTURE_ENGINE_BASENAME: &str = "capture-engine";
-
-    pub fn screen_recording_permission_status() -> Result<ScreenRecordingPermissionStatus> {
-        run_permission_command("--permission-status")
-    }
-
-    pub fn request_screen_recording_permission() -> Result<ScreenRecordingPermissionStatus> {
-        run_permission_command("--request-permission")
-    }
 
     pub fn list_targets() -> Result<Vec<CaptureTarget>> {
         let output = run_capture_engine_command(&["--list"], "target listing")?;
@@ -612,25 +604,6 @@ mod platform {
         line.contains("capture-engine: recording started")
     }
 
-    fn run_permission_command(arg: &str) -> Result<ScreenRecordingPermissionStatus> {
-        let output = run_capture_engine_command(&[arg], "screen recording permission check")?;
-
-        if !output.status.success() {
-            return Err(RecorderError::Backend(format!(
-                "screen recording permission check failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-
-        match String::from_utf8_lossy(&output.stdout).trim() {
-            "granted" => Ok(ScreenRecordingPermissionStatus::Granted),
-            "missing" => Ok(ScreenRecordingPermissionStatus::Missing),
-            status => Err(RecorderError::Backend(format!(
-                "unknown screen recording permission status: {status}"
-            ))),
-        }
-    }
-
     fn run_capture_engine_command(args: &[&str], label: &str) -> Result<Output> {
         let mut child = Command::new(capture_engine_path()?)
             .args(args)
@@ -722,18 +695,6 @@ mod platform {
 #[cfg(not(target_os = "windows"))]
 mod platform {
     use super::*;
-
-    pub fn screen_recording_permission_status() -> Result<ScreenRecordingPermissionStatus> {
-        Err(RecorderError::Backend(
-            "wrec Windows recorder only supports Windows".into(),
-        ))
-    }
-
-    pub fn request_screen_recording_permission() -> Result<ScreenRecordingPermissionStatus> {
-        Err(RecorderError::Backend(
-            "wrec Windows recorder only supports Windows".into(),
-        ))
-    }
 
     pub fn list_targets() -> Result<Vec<CaptureTarget>> {
         Err(RecorderError::Backend(

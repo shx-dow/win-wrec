@@ -1,6 +1,7 @@
 use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
 use std::{
-    ffi::c_void,
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
     io::BufRead,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -254,7 +255,7 @@ pub fn list_targets() -> Result<()> {
             continue;
         }
         let process = window.process_name().unwrap_or_else(|_| "App".to_string());
-        let id = window.as_raw_hwnd() as usize as u64;
+        let id = stable_window_id(&process, &title);
         println!(
             "window\t{id}\t{}",
             sanitize_target_name(&format!("{process} - {title}"))
@@ -273,10 +274,8 @@ fn sanitize_target_name(name: &str) -> String {
 pub fn start_recording(args: RecordArgs) -> Result<()> {
     match args.target_kind.as_str() {
         "window" => {
-            let window = Window::from_raw_hwnd(handle_from_id(args.target_id));
-            if !window.is_valid() {
-                bail!("window not found or is not capturable");
-            }
+            let window = find_window_by_stable_id(args.target_id)
+                .context("window not found or is not capturable")?;
             let native_width = window.width().context("failed to get window width")?;
             let native_height = window.height().context("failed to get window height")?;
             let size = encoder_size(
@@ -775,8 +774,29 @@ unsafe fn convert_loopback_buffer(
     out
 }
 
-fn handle_from_id(id: u64) -> *mut c_void {
-    (id as usize) as *mut c_void
+fn stable_window_id(process: &str, title: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    process.hash(&mut hasher);
+    title.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn find_window_by_stable_id(target_id: u64) -> Result<Window> {
+    let current_pid = std::process::id();
+    for window in Window::enumerate().context("failed to enumerate windows for target lookup")? {
+        if !window.is_valid() || window.process_id().ok() == Some(current_pid) {
+            continue;
+        }
+        let title = window.title().unwrap_or_default();
+        if title.trim().is_empty() {
+            continue;
+        }
+        let process = window.process_name().unwrap_or_default();
+        if stable_window_id(&process, &title) == target_id {
+            return Ok(window);
+        }
+    }
+    bail!("window target not found or is not capturable")
 }
 
 fn even_dimension(value: u32) -> u32 {
