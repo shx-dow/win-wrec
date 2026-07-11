@@ -126,6 +126,11 @@ impl MfEncoder {
         })
     }
 
+    /// Align video sample times with the shared A/V wall-clock origin.
+    pub fn set_recording_start(&mut self, start: std::time::Instant) {
+        self.recording_start = start;
+    }
+
     pub fn write_video(&mut self, frame: &super::dxgi::FrameData) -> Result<()> {
         let sink_writer = self
             .sink_writer
@@ -171,8 +176,6 @@ impl MfEncoder {
         wr(unsafe { sink_writer.WriteSample(self.video_stream_index, &sample) })?;
         Ok(())
     }
-
-
 
     pub fn finalize(&mut self) -> Result<()> {
         if self.finalized {
@@ -232,12 +235,7 @@ impl MfEncoder {
         Ok(stream_index)
     }
 
-    pub fn write_audio(
-        &mut self,
-        pcm_data: &[u8],
-        timestamp: i64,
-        duration: i64,
-    ) -> Result<()> {
+    pub fn write_audio(&mut self, pcm_data: &[u8], timestamp: i64, duration: i64) -> Result<()> {
         let Some(audio_stream) = self.audio_stream_index else {
             return Ok(());
         };

@@ -2,7 +2,7 @@ use anyhow::{Context as AnyhowContext, Result};
 use std::io::BufRead;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    mpsc, Arc, Barrier, Mutex,
+    mpsc, Arc, Barrier, Mutex, OnceLock,
 };
 use std::thread;
 use std::time::{Duration, Instant};
@@ -58,8 +58,8 @@ pub fn start_recording(args: RecordArgs) -> Result<()> {
         _ => domain::Quality::Balanced,
     };
 
-    let recording_start = Instant::now();
-
+    // Placeholder; real t=0 is set after the A/V start barrier so both streams share it.
+    let timeline_start = Arc::new(OnceLock::new());
     let encoder = MfEncoder::new(
         &args.output_path,
         &video_media_type,
@@ -67,7 +67,7 @@ pub fn start_recording(args: RecordArgs) -> Result<()> {
         args.fps,
         quality,
         codec,
-        recording_start,
+        Instant::now(),
     )
     .with_context(|| "encoder init")?;
     let encoder = Arc::new(Mutex::new(encoder));
@@ -80,8 +80,9 @@ pub fn start_recording(args: RecordArgs) -> Result<()> {
         let enc = encoder.clone();
         let p = paused.clone();
         let b = barrier.clone();
-        let (handle, thread_running) = audio::spawn_capture_thread(enc, p, b)
-            .with_context(|| "spawn audio thread")?;
+        let start = timeline_start.clone();
+        let (handle, thread_running) =
+            audio::spawn_capture_thread(enc, p, b, start).with_context(|| "spawn audio thread")?;
         Some((handle, thread_running))
     } else {
         None
@@ -89,7 +90,6 @@ pub fn start_recording(args: RecordArgs) -> Result<()> {
 
     let target_fps = args.fps;
     let frame_duration = Duration::from_micros(1_000_000 / target_fps as u64);
-    let mut next_frame_time = Instant::now();
 
     eprintln!("capture-engine: recording started");
 
@@ -115,7 +115,15 @@ pub fn start_recording(args: RecordArgs) -> Result<()> {
         barrier.wait();
     }
 
-    let metric_start = Instant::now();
+    // Shared A/V origin: first sample on both streams is relative to this instant.
+    let recording_start = Instant::now();
+    let _ = timeline_start.set(recording_start);
+    if let Ok(mut enc) = encoder.lock() {
+        enc.set_recording_start(recording_start);
+    }
+
+    let mut next_frame_time = recording_start;
+    let metric_start = recording_start;
     let mut frame_count: u64 = 0;
 
     loop {

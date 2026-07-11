@@ -43,8 +43,6 @@ use windows_capture::{
 
 use crate::RecordArgs;
 
-const REFTIMES_PER_SEC: i64 = 10_000_000;
-
 struct CaptureFlags {
     output_path: std::path::PathBuf,
     width: u32,
@@ -125,9 +123,17 @@ impl GraphicsCaptureApiHandler for Capture {
         )?;
         let recording_start = Instant::now();
         let encoder = Arc::new(Mutex::new(Some(encoder)));
+        // windows-capture stamps audio by cumulative samples sent (ignores our
+        // timestamps). Start both streams from the same Instant so continuous
+        // silence keeps A/V aligned through idle periods and pauses.
         let (audio_running, audio_thread) = audio_format
             .map(|format| {
-                spawn_audio_capture_thread(format, encoder.clone(), flags.paused.clone())
+                spawn_audio_capture_thread(
+                    format,
+                    encoder.clone(),
+                    flags.paused.clone(),
+                    recording_start,
+                )
             })
             .transpose()?
             .map_or((None, None), |(running, handle)| {
@@ -441,12 +447,20 @@ fn spawn_audio_capture_thread(
     format: LoopbackAudioFormat,
     encoder: Arc<Mutex<Option<VideoEncoder>>>,
     paused: Arc<AtomicBool>,
+    timeline_start: Instant,
 ) -> Result<(Arc<AtomicBool>, thread::JoinHandle<()>)> {
     let running = Arc::new(AtomicBool::new(true));
     let thread_running = running.clone();
     let (startup_tx, startup_rx) = mpsc::channel();
     let handle = thread::spawn(move || {
-        if let Err(err) = run_loopback_audio(format, encoder, paused, thread_running, startup_tx) {
+        if let Err(err) = run_loopback_audio(
+            format,
+            encoder,
+            paused,
+            thread_running,
+            timeline_start,
+            startup_tx,
+        ) {
             eprintln!("capture-engine: audio capture failed: {err}");
         }
     });
@@ -471,13 +485,20 @@ fn run_loopback_audio(
     encoder: Arc<Mutex<Option<VideoEncoder>>>,
     paused: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
+    timeline_start: Instant,
     startup: mpsc::Sender<std::result::Result<(), String>>,
 ) -> Result<()> {
     let mut startup = Some(startup);
     let result = unsafe {
         let should_uninitialize = co_initialize_mta()?;
-        let result =
-            capture_loopback_audio(format, encoder, paused, running, &mut startup);
+        let result = capture_loopback_audio(
+            format,
+            encoder,
+            paused,
+            running,
+            timeline_start,
+            &mut startup,
+        );
         if should_uninitialize {
             CoUninitialize();
         }
@@ -490,11 +511,84 @@ fn run_loopback_audio(
     result
 }
 
+fn expected_audio_frames(timeline_start: Instant, sample_rate: u32) -> u64 {
+    let elapsed = timeline_start.elapsed().as_secs_f64();
+    (elapsed * sample_rate as f64).max(0.0) as u64
+}
+
+fn send_audio_pcm(
+    encoder: &Arc<Mutex<Option<VideoEncoder>>>,
+    pcm: &[u8],
+    running: Option<&AtomicBool>,
+) -> bool {
+    if pcm.is_empty() {
+        return true;
+    }
+    let mut encoder = encoder.lock().unwrap();
+    if let Some(encoder) = encoder.as_mut() {
+        // windows-capture 2.x ignores the timestamp and stamps by samples sent.
+        if let Err(err) = encoder.send_audio_buffer(pcm, 0) {
+            eprintln!("capture-engine: failed to send audio buffer: {err}");
+            if let Some(running) = running {
+                running.store(false, Ordering::Relaxed);
+            }
+            return false;
+        }
+    }
+    true
+}
+
+fn pad_silence_to_wall(
+    encoder: &Arc<Mutex<Option<VideoEncoder>>>,
+    samples_written: &mut u64,
+    timeline_start: Instant,
+    format: LoopbackAudioFormat,
+    running: Option<&AtomicBool>,
+) -> bool {
+    let target = expected_audio_frames(timeline_start, format.sample_rate);
+    if *samples_written >= target {
+        return true;
+    }
+
+    let chunk_frames = ((format.sample_rate as u64 * 20) / 1000).max(1);
+    let frame_bytes = format.channels as usize * 2;
+    let silence_chunk = vec![0u8; chunk_frames as usize * frame_bytes];
+
+    while *samples_written < target {
+        if let Some(running) = running {
+            if !running.load(Ordering::Relaxed) {
+                return false;
+            }
+        }
+        let remaining = target - *samples_written;
+        let frames = remaining.min(chunk_frames) as usize;
+        let pcm = if frames == chunk_frames as usize {
+            silence_chunk.as_slice()
+        } else {
+            // Can't return temp ref; write via owned buffer below.
+            &[]
+        };
+        if frames == chunk_frames as usize {
+            if !send_audio_pcm(encoder, pcm, running) {
+                return false;
+            }
+        } else {
+            let partial = vec![0u8; frames * frame_bytes];
+            if !send_audio_pcm(encoder, &partial, running) {
+                return false;
+            }
+        }
+        *samples_written += frames as u64;
+    }
+    true
+}
+
 unsafe fn capture_loopback_audio(
     format: LoopbackAudioFormat,
     encoder: Arc<Mutex<Option<VideoEncoder>>>,
     paused: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
+    timeline_start: Instant,
     startup: &mut Option<mpsc::Sender<std::result::Result<(), String>>>,
 ) -> Result<()> {
     let (audio_client, capture_client) = unsafe { open_loopback_capture_client()? };
@@ -507,7 +601,8 @@ unsafe fn capture_loopback_audio(
         format.sample_rate, format.channels, format.bits_per_sample
     );
 
-    let mut base_device_position: Option<u64> = None;
+    // Cumulative PCM frames written. windows-capture timestamps from this count.
+    let mut samples_written: u64 = 0;
 
     while running.load(Ordering::Relaxed) {
         let mut packet_size = unsafe { capture_client.GetNextPacketSize()? };
@@ -515,48 +610,48 @@ unsafe fn capture_loopback_audio(
             let mut data = std::ptr::null_mut::<u8>();
             let mut frames = 0_u32;
             let mut flags = 0_u32;
-            let mut dev_position = 0u64;
-            unsafe {
-                capture_client.GetBuffer(
-                    &mut data,
-                    &mut frames,
-                    &mut flags,
-                    Some(&mut dev_position),
-                    None,
-                )?
-            };
+            unsafe { capture_client.GetBuffer(&mut data, &mut frames, &mut flags, None, None)? };
 
-            let audio = unsafe { convert_loopback_buffer(data, frames, flags, format) };
+            let force_silent = paused.load(Ordering::Relaxed)
+                || (flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) != 0;
+            let audio = if force_silent {
+                let samples = frames as usize * format.channels as usize;
+                vec![0u8; samples * 2]
+            } else {
+                unsafe { convert_loopback_buffer(data, frames, flags, format) }
+            };
             unsafe { capture_client.ReleaseBuffer(frames)? };
 
-            if !paused.load(Ordering::Relaxed) && !audio.is_empty() {
-                let ts = if let Some(base) = base_device_position {
-                    let rel = dev_position.saturating_sub(base);
-                    (rel as i64 * REFTIMES_PER_SEC) / format.sample_rate as i64
-                } else {
-                    base_device_position = Some(dev_position);
-                    0i64
-                };
-                let mut encoder = encoder.lock().unwrap();
-                if let Some(encoder) = encoder.as_mut() {
-                    if let Err(err) = encoder.send_audio_buffer(&audio, ts) {
-                        eprintln!("capture-engine: failed to send audio buffer: {err}");
-                        running.store(false, Ordering::Relaxed);
-                        break;
-                    }
+            if !audio.is_empty() {
+                if !send_audio_pcm(&encoder, &audio, Some(&running)) {
+                    break;
                 }
+                samples_written = samples_written.saturating_add(frames as u64);
             }
 
             packet_size = unsafe { capture_client.GetNextPacketSize()? };
         }
+
+        // Idle / gaps / pause with no packets: keep the sample clock moving with silence
+        // so sound that starts later lands at the correct wall-clock position.
+        if !pad_silence_to_wall(
+            &encoder,
+            &mut samples_written,
+            timeline_start,
+            format,
+            Some(&running),
+        ) {
+            break;
+        }
+
         thread::sleep(Duration::from_millis(10));
     }
+
+    let _ = pad_silence_to_wall(&encoder, &mut samples_written, timeline_start, format, None);
 
     let _ = unsafe { audio_client.Stop() };
     Ok(())
 }
-
-
 
 unsafe fn open_loopback_capture_client() -> Result<(IAudioClient, IAudioCaptureClient)> {
     let enumerator: IMMDeviceEnumerator =
