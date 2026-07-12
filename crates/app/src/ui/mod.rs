@@ -1,157 +1,7 @@
-use crate::{
-    app::WrecApp,
-    assets::{PhosphorIcon, GEIST_FONT_FAMILY, GEIST_MONO_FONT_FAMILY},
-    platform::CliInstallStatus,
-};
-use domain::{
-    CaptureSourceKind, CaptureTarget, FrameRate, Quality, RecorderMetrics, Resolution,
-    ScreenRecordingPermissionStatus,
-};
-use gpui::prelude::FluentBuilder as _;
-use gpui::*;
-use gpui_component::{
-    button::{Button as UiButton, ButtonVariants as _},
-    input::Input,
-    label::Label,
-    notification::Notification,
-    select::{Select, SelectItem, SelectState},
-    switch::Switch,
-    ActiveTheme as _, Colorize as _, Disableable as _, Icon as UiIcon, Root, Sizable as _, Theme,
-    ThemeMode, WindowExt as _,
-};
-use std::rc::Rc;
+use crate::app::{RecorderState, WrecApp};
+use domain::{CaptureSourceKind, Codec, FrameRate, Quality, Resolution};
 
-pub(crate) type ControlSelect = SelectState<Vec<&'static str>>;
-pub(crate) type LimitedSelect = SelectState<Vec<LimitedOption>>;
-pub(crate) type TargetSelect = SelectState<Vec<TargetOption>>;
-
-pub(crate) const CONTROL_HEIGHT: f32 = 32.;
-const RECORD_BUTTON_HEIGHT: f32 = 42.;
-pub(crate) const WINDOW_WIDTH: f32 = 628.;
-pub(crate) const WINDOW_HEIGHT: f32 = 540.;
-pub(crate) const WINDOW_MIN_WIDTH: f32 = 608.;
-pub(crate) const WINDOW_MIN_HEIGHT: f32 = 500.;
-pub(crate) const SOURCE_OPTIONS: [&str; 2] = ["Display", "Window"];
-pub(crate) const CODEC_OPTIONS: [&str; 2] = ["HEVC", "H.264"];
-pub(crate) const QUALITY_OPTIONS: [&str; 3] = ["Balanced", "Efficient", "High"];
-
-const SIDEBAR_WIDTH: f32 = 154.;
-const TITLE_BAR_HEIGHT: f32 = 40.;
-const NATIVE_WINDOW_CONTROLS_WIDTH: f32 = 72.;
-const FIELD_LABEL_WIDTH: f32 = 96.;
-const NOTIFICATION_WIDTH: f32 = 320.;
-
-#[derive(Clone, Copy)]
-struct ThemePalette {
-    background: u32,
-    foreground: u32,
-    card: u32,
-    card_foreground: u32,
-    popover: u32,
-    popover_foreground: u32,
-    primary: u32,
-    primary_hover: u32,
-    primary_active: u32,
-    primary_foreground: u32,
-    secondary: u32,
-    secondary_hover: u32,
-    secondary_active: u32,
-    secondary_foreground: u32,
-    muted: u32,
-    muted_foreground: u32,
-    accent: u32,
-    accent_foreground: u32,
-    destructive: u32,
-    destructive_foreground: u32,
-    border: u32,
-    input: u32,
-    chart_1: u32,
-    chart_2: u32,
-    chart_3: u32,
-    chart_4: u32,
-    chart_5: u32,
-    sidebar: u32,
-    sidebar_foreground: u32,
-    sidebar_primary: u32,
-    sidebar_primary_foreground: u32,
-    sidebar_accent: u32,
-    sidebar_accent_foreground: u32,
-    sidebar_border: u32,
-}
-
-const LIGHT_PALETTE: ThemePalette = ThemePalette {
-    background: 0xffffff,
-    foreground: 0x18181b,
-    card: 0xffffff,
-    card_foreground: 0x18181b,
-    popover: 0xffffff,
-    popover_foreground: 0x18181b,
-    primary: 0x18181b,
-    primary_hover: 0x333338,
-    primary_active: 0x000000,
-    primary_foreground: 0xfafafa,
-    secondary: 0xededf0,
-    secondary_hover: 0xe1e1e6,
-    secondary_active: 0xd6d6dc,
-    secondary_foreground: 0x18181b,
-    muted: 0xf4f4f5,
-    muted_foreground: 0x71717a,
-    accent: 0xf4f4f5,
-    accent_foreground: 0x18181b,
-    destructive: 0xe5484d,
-    destructive_foreground: 0xffffff,
-    border: 0xe4e4e7,
-    input: 0xe4e4e7,
-    chart_1: 0x18181b,
-    chart_2: 0xededf0,
-    chart_3: 0xf4f4f5,
-    chart_4: 0xd4d4d8,
-    chart_5: 0x18181b,
-    sidebar: 0xfafafa,
-    sidebar_foreground: 0x18181b,
-    sidebar_primary: 0x18181b,
-    sidebar_primary_foreground: 0xfafafa,
-    sidebar_accent: 0xf0f0f2,
-    sidebar_accent_foreground: 0x18181b,
-    sidebar_border: 0xededf0,
-};
-
-const DARK_PALETTE: ThemePalette = ThemePalette {
-    background: 0x000000,
-    foreground: 0xfafafa,
-    card: 0x141416,
-    card_foreground: 0xfafafa,
-    popover: 0x141416,
-    popover_foreground: 0xfafafa,
-    primary: 0xfafafa,
-    primary_hover: 0xe2e2e6,
-    primary_active: 0xcacace,
-    primary_foreground: 0x0a0a0a,
-    secondary: 0x1f1f22,
-    secondary_hover: 0x2b2b2f,
-    secondary_active: 0x343438,
-    secondary_foreground: 0xfafafa,
-    muted: 0x161618,
-    muted_foreground: 0xa1a1aa,
-    accent: 0x1f1f22,
-    accent_foreground: 0xfafafa,
-    destructive: 0xe5484d,
-    destructive_foreground: 0xffffff,
-    border: 0x232326,
-    input: 0x232326,
-    chart_1: 0xfafafa,
-    chart_2: 0x1f1f22,
-    chart_3: 0x1f1f22,
-    chart_4: 0x3f3f46,
-    chart_5: 0xfafafa,
-    sidebar: 0x0b0b0c,
-    sidebar_foreground: 0xfafafa,
-    sidebar_primary: 0xfafafa,
-    sidebar_primary_foreground: 0x0a0a0a,
-    sidebar_accent: 0x1f1f22,
-    sidebar_accent_foreground: 0xfafafa,
-    sidebar_border: 0x1c1c1f,
-};
+pub(crate) const WINDOW_SIZE: egui::Vec2 = egui::vec2(520.0, 480.0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AppTab {
@@ -162,105 +12,7 @@ pub(crate) enum AppTab {
     Nerd,
 }
 
-impl AppTab {
-    fn id(self) -> &'static str {
-        match self {
-            Self::General => "general",
-            Self::Settings => "settings",
-            Self::Cli => "cli",
-            Self::About => "about",
-            Self::Nerd => "nerd",
-        }
-    }
 
-    fn is_active(self, active_tab: Self) -> bool {
-        self == active_tab
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct TargetOption {
-    key: SharedString,
-    title: SharedString,
-}
-
-impl TargetOption {
-    pub(crate) fn new(target: &CaptureTarget) -> Self {
-        Self {
-            key: target_key(target).into(),
-            title: target.name.clone().into(),
-        }
-    }
-
-    pub(crate) fn key(&self) -> &SharedString {
-        &self.key
-    }
-}
-
-impl SelectItem for TargetOption {
-    type Value = SharedString;
-
-    fn title(&self) -> SharedString {
-        self.title.clone()
-    }
-
-    fn value(&self) -> &Self::Value {
-        &self.key
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LimitedOption {
-    value: SharedString,
-    title: SharedString,
-    disabled: bool,
-}
-
-impl LimitedOption {
-    fn new(label: &'static str, disabled: bool) -> Self {
-        Self {
-            value: label.into(),
-            title: label.into(),
-            disabled,
-        }
-    }
-}
-
-impl SelectItem for LimitedOption {
-    type Value = SharedString;
-
-    fn title(&self) -> SharedString {
-        self.title.clone()
-    }
-
-    fn value(&self) -> &Self::Value {
-        &self.value
-    }
-
-    fn disabled(&self) -> bool {
-        self.disabled
-    }
-}
-
-pub(crate) fn resolution_options_for(quality: Quality) -> Vec<LimitedOption> {
-    [
-        (Resolution::Native, "Original"),
-        (Resolution::R4k, "4K"),
-        (Resolution::R2k, "2K"),
-        (Resolution::R1080p, "1080p"),
-        (Resolution::R720p, "720p"),
-    ]
-    .into_iter()
-    .map(|(resolution, label)| LimitedOption::new(label, resolution_disabled(quality, resolution)))
-    .collect()
-}
-
-pub(crate) fn fps_options_for(quality: Quality) -> Vec<LimitedOption> {
-    [(FrameRate::Fps30, "30 FPS"), (FrameRate::Fps60, "60 FPS")]
-        .into_iter()
-        .map(|(fps, label)| LimitedOption::new(label, fps_disabled(quality, fps)))
-        .collect()
-}
 
 pub(crate) fn resolution_disabled(quality: Quality, resolution: Resolution) -> bool {
     quality
@@ -272,1159 +24,6 @@ pub(crate) fn fps_disabled(quality: Quality, fps: FrameRate) -> bool {
     fps.capped_at(quality.max_fps()) != fps
 }
 
-impl WrecApp {
-    pub(crate) fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_dark = cx.theme().mode.is_dark();
-        div()
-            .id("wrec-titlebar")
-            .flex()
-            .items_center()
-            .justify_between()
-            .h(px(TITLE_BAR_HEIGHT))
-            .flex_shrink_0()
-            .pl(px(14.))
-            .pr_2()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(
-                div()
-                    .w(px(NATIVE_WINDOW_CONTROLS_WIDTH))
-                    .h_full()
-                    .flex_shrink_0(),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .h_full()
-                    .window_control_area(WindowControlArea::Drag),
-            )
-            .child(theme_toggle(is_dark, cx))
-    }
-
-    pub(crate) fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let active = self.active_tab;
-        let items = [
-            Some(sidebar_nav_item(
-                "General",
-                PhosphorIcon::Gauge,
-                AppTab::General,
-                AppTab::General.is_active(active),
-                cx,
-            )),
-            Some(sidebar_nav_item(
-                "CLI",
-                PhosphorIcon::Terminal,
-                AppTab::Cli,
-                AppTab::Cli.is_active(active),
-                cx,
-            )),
-            self.show_nerd_logs.then(|| {
-                sidebar_nav_item(
-                    "Nerd",
-                    PhosphorIcon::Pulse,
-                    AppTab::Nerd,
-                    AppTab::Nerd.is_active(active),
-                    cx,
-                )
-            }),
-            Some(sidebar_nav_item(
-                "Settings",
-                PhosphorIcon::Gear,
-                AppTab::Settings,
-                AppTab::Settings.is_active(active),
-                cx,
-            )),
-            Some(sidebar_nav_item(
-                "About",
-                PhosphorIcon::Info,
-                AppTab::About,
-                AppTab::About.is_active(active),
-                cx,
-            )),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-
-        div()
-            .id("wrec-sidebar")
-            .flex()
-            .flex_col()
-            .w(px(SIDEBAR_WIDTH))
-            .h_full()
-            .flex_shrink_0()
-            .overflow_hidden()
-            .pt_3()
-            .bg(cx.theme().sidebar)
-            .text_color(cx.theme().sidebar_foreground)
-            .border_r_1()
-            .border_color(cx.theme().sidebar_border)
-            .child(WrecSidebarNav { items }.render("wrec-sidebar-nav", cx))
-    }
-
-    pub(crate) fn render_general_tab(
-        &self,
-        record_icon: PhosphorIcon,
-        record_label: &'static str,
-        record_tip: &'static str,
-        record_is_idle: bool,
-        record_disabled: bool,
-        show_pause_button: bool,
-        pause_icon: PhosphorIcon,
-        pause_label: &'static str,
-        pause_tip: &'static str,
-        pause_disabled: bool,
-        controls_disabled: bool,
-        muted_foreground: Hsla,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let source_row = div()
-            .flex()
-            .items_center()
-            .gap_3()
-            .min_w(px(0.))
-            .child(field_label("Source", muted_foreground))
-            .child(
-                div().flex_1().min_w(px(0.)).h(px(CONTROL_HEIGHT)).child(
-                    Select::new(&self.source_select)
-                        .large()
-                        .h(px(CONTROL_HEIGHT))
-                        .placeholder("Source")
-                        .menu_max_h(rems(7.))
-                        .disabled(controls_disabled),
-                ),
-            );
-        let target_row = labeled_select_row(
-            "Target",
-            muted_foreground,
-            Select::new(&self.target_select)
-                .large()
-                .h(px(CONTROL_HEIGHT))
-                .placeholder("Target")
-                .search_placeholder("Search targets")
-                .menu_max_h(rems(14.))
-                .disabled(controls_disabled),
-        );
-        let format_row = labeled_select_row(
-            "Format",
-            muted_foreground,
-            Select::new(&self.codec_select)
-                .large()
-                .h(px(CONTROL_HEIGHT))
-                .placeholder("Format")
-                .disabled(controls_disabled),
-        );
-        let quality_row = labeled_select_row(
-            "Preset",
-            muted_foreground,
-            Select::new(&self.quality_select)
-                .large()
-                .h(px(CONTROL_HEIGHT))
-                .placeholder("Preset")
-                .disabled(controls_disabled),
-        );
-        let resolution_row = labeled_select_row(
-            "Resolution",
-            muted_foreground,
-            Select::new(&self.resolution_select)
-                .large()
-                .h(px(CONTROL_HEIGHT))
-                .placeholder("Resolution")
-                .disabled(controls_disabled),
-        );
-        let frame_rate_row = labeled_select_row(
-            "Frame Rate",
-            muted_foreground,
-            Select::new(&self.fps_select)
-                .large()
-                .h(px(CONTROL_HEIGHT))
-                .placeholder("Frame Rate")
-                .disabled(controls_disabled),
-        );
-        let cursor_row = label_switch_row(
-            "Cursor",
-            muted_foreground,
-            Switch::new("cursor-switch")
-                .checked(self.settings.include_cursor)
-                .color(switch_on_color(cx))
-                .tooltip("Capture cursor")
-                .disabled(controls_disabled)
-                .on_click(cx.listener(|this, checked, _, cx| {
-                    this.set_include_cursor(*checked, cx);
-                })),
-        );
-        let audio_row = label_switch_row(
-            "System Audio",
-            muted_foreground,
-            Switch::new("system-audio-switch")
-                .checked(self.settings.include_system_audio)
-                .color(switch_on_color(cx))
-                .tooltip("Capture system audio")
-                .disabled(controls_disabled)
-                .on_click(cx.listener(|this, checked, _, cx| {
-                    this.set_include_system_audio(*checked, cx);
-                })),
-        );
-
-        div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h(px(0.))
-            .gap_4()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(source_row)
-                    .child(target_row),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(format_row)
-                    .child(resolution_row)
-                    .child(quality_row)
-                    .child(frame_rate_row)
-                    .child(cursor_row)
-                    .child(audio_row),
-            )
-            .child(if show_pause_button {
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(
-                        pause_button(pause_icon, pause_label, pause_tip, pause_disabled, cx)
-                            .flex_1(),
-                    )
-                    .child(
-                        record_button(
-                            record_icon,
-                            record_label,
-                            record_tip,
-                            record_is_idle,
-                            record_disabled,
-                            cx,
-                        )
-                        .flex_1(),
-                    )
-                    .into_any_element()
-            } else {
-                record_button(
-                    record_icon,
-                    record_label,
-                    record_tip,
-                    record_is_idle,
-                    record_disabled,
-                    cx,
-                )
-                .w_full()
-                .into_any_element()
-            })
-    }
-
-    pub(crate) fn render_settings_tab(
-        &self,
-        controls_disabled: bool,
-        muted_foreground: Hsla,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .min_h(px(CONTROL_HEIGHT))
-                    .child(row_label("Screen Recording"))
-                    .child(permission_state_button(
-                        self.permission_status,
-                        self.permission_busy,
-                        cx,
-                    )),
-            )
-            .child(switch_row(
-                "Hide wrec",
-                if self.settings.hide_wrec { "On" } else { "Off" },
-                muted_foreground,
-                Switch::new("hide-window-switch")
-                    .checked(self.settings.hide_wrec)
-                    .color(switch_on_color(cx))
-                    .tooltip("Hide wrec from recording")
-                    .disabled(controls_disabled)
-                    .on_click(cx.listener(|this, checked, _, cx| {
-                        this.set_hide_wrec(*checked, cx);
-                    })),
-            ))
-            .child(switch_row(
-                "Logs",
-                if self.show_nerd_logs { "On" } else { "Off" },
-                muted_foreground,
-                Switch::new("logs-switch")
-                    .checked(self.show_nerd_logs)
-                    .color(switch_on_color(cx))
-                    .tooltip("Show Nerd tab")
-                    .on_click(cx.listener(|this, checked, _, cx| {
-                        this.set_show_nerd_logs(*checked, cx);
-                    })),
-            ))
-            .child(
-                div().w_full().h(px(CONTROL_HEIGHT)).child(
-                    Input::new(&self.output_input)
-                        .large()
-                        .h(px(CONTROL_HEIGHT))
-                        .disabled(controls_disabled),
-                ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .mt_3()
-                    .child(
-                        UiButton::new("choose-output-dir")
-                            .secondary()
-                            .flex_1()
-                            .h(px(CONTROL_HEIGHT))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .icon(
-                                UiIcon::new(PhosphorIcon::FolderOpen).text_color(muted_foreground),
-                            )
-                            .label("Choose")
-                            .tooltip("Choose output folder")
-                            .disabled(controls_disabled)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.choose_output_dir(window, cx);
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        UiButton::new("open-last-recording-dir")
-                            .secondary()
-                            .flex_1()
-                            .h(px(CONTROL_HEIGHT))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .icon(
-                                UiIcon::new(PhosphorIcon::FolderOpen).text_color(muted_foreground),
-                            )
-                            .label("Open")
-                            .tooltip("Open last recording folder")
-                            .disabled(self.last_recording_dir.is_none())
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_last_recording_dir(window, cx);
-                            })),
-                    ),
-            )
-    }
-
-    pub(crate) fn render_cli_tab(
-        &self,
-        muted_foreground: Hsla,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let cli_command = crate::platform::cli_install_command();
-        let cli_status_color = match self.cli_install_status {
-            CliInstallStatus::Conflict => cx.theme().danger,
-            _ => muted_foreground,
-        };
-
-        div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .min_h(px(CONTROL_HEIGHT))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .items_baseline()
-                            .gap_2()
-                            .min_w(px(0.))
-                            .child(row_label("Status"))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(cli_status_color)
-                                    .truncate()
-                                    .child(self.cli_install_status.label()),
-                            ),
-                    )
-                    .child(
-                        UiButton::new("cli-refresh-install")
-                            .ghost()
-                            .compact()
-                            .size(px(CONTROL_HEIGHT))
-                            .icon(UiIcon::new(PhosphorIcon::Refresh).text_color(muted_foreground))
-                            .tooltip("Refresh CLI install status")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.refresh_cli_install_status(cx);
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .min_h(px(CONTROL_HEIGHT))
-                    .child(row_label("Install command"))
-                    .child(
-                        UiButton::new("cli-copy-install")
-                            .secondary()
-                            .compact()
-                            .h(px(CONTROL_HEIGHT))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .icon(UiIcon::new(PhosphorIcon::Clipboard).text_color(muted_foreground))
-                            .label("Copy")
-                            .tooltip("Copy CLI install command")
-                            .disabled(cli_command.is_none())
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.copy_cli_install_command(window, cx);
-                            })),
-                    ),
-            )
-    }
-
-    pub(crate) fn render_nerds_tab(
-        &self,
-        metrics_label: Option<String>,
-        muted_foreground: Hsla,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let metrics_label = metrics_label.unwrap_or_else(zero_metrics_label);
-
-        div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .flex_1()
-            .min_h(px(0.))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .min_h(px(CONTROL_HEIGHT))
-                    .child(row_label("Logs"))
-                    .child(
-                        UiButton::new("open-recordings-data-dir")
-                            .secondary()
-                            .compact()
-                            .h(px(CONTROL_HEIGHT))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .icon(
-                                UiIcon::new(PhosphorIcon::FolderOpen).text_color(muted_foreground),
-                            )
-                            .label("Open")
-                            .tooltip("Open recordings data folder")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_recordings_data_dir(window, cx);
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .flex_1()
-                    .min_h(px(0.))
-                    .overflow_hidden()
-                    .px_3()
-                    .child(
-                        div()
-                            .max_w_full()
-                            .truncate()
-                            .text_center()
-                            .text_size(px(24.))
-                            .line_height(relative(1.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .child(metrics_label),
-                    ),
-            )
-    }
-
-    pub(crate) fn render_about_tab(
-        &self,
-        muted_foreground: Hsla,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(plain_info_row(
-                "Version",
-                env!("CARGO_PKG_VERSION"),
-                muted_foreground,
-            ))
-            .child(
-                UiButton::new("open-github")
-                    .secondary()
-                    .w_full()
-                    .h(px(CONTROL_HEIGHT))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .icon(UiIcon::new(PhosphorIcon::Github).text_color(muted_foreground))
-                    .label("GitHub")
-                    .tooltip("Open GitHub repository")
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        match crate::platform::open_url(crate::app::GITHUB_URL) {
-                            Ok(()) => this.push_log("opened GitHub repository"),
-                            Err(err) => {
-                                this.push_log(format!("open GitHub failed: {err}"));
-                                push_app_notification(
-                                    window,
-                                    Notification::new().message(format!(
-                                        "Could not open GitHub repository: {err}"
-                                    )),
-                                    cx,
-                                );
-                            }
-                        }
-                        cx.notify();
-                    })),
-            )
-    }
-}
-
-impl Render for WrecApp {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let foreground = cx.theme().foreground;
-        let muted_foreground = cx.theme().muted_foreground;
-        let background = cx.theme().background;
-        let border = cx.theme().border;
-        let notification_layer = Root::render_notification_layer(window, cx);
-        let active_session = self.recorder_state.is_active_session();
-        let (record_icon, record_label, record_tip, record_is_idle) = if active_session {
-            (PhosphorIcon::Stop, "Stop", "Stop recording", false)
-        } else {
-            (PhosphorIcon::FilmReel, "Record", "Start recording", true)
-        };
-        let (pause_icon, pause_label, pause_tip) = if self.recorder_state.is_paused() {
-            (PhosphorIcon::Play, "Resume", "Resume recording")
-        } else {
-            (PhosphorIcon::Pause, "Pause", "Pause recording")
-        };
-        let record_disabled = matches!(
-            self.recorder_state,
-            crate::app::RecorderState::Starting
-                | crate::app::RecorderState::Pausing
-                | crate::app::RecorderState::Resuming
-                | crate::app::RecorderState::Stopping
-        ) || (!active_session
-            && (self.permission_busy || !self.permission_status.is_granted()));
-        let pause_disabled = matches!(
-            self.recorder_state,
-            crate::app::RecorderState::Pausing
-                | crate::app::RecorderState::Resuming
-                | crate::app::RecorderState::Stopping
-        );
-        let controls_disabled =
-            self.recorder_state.is_busy() || self.permission_busy || active_session;
-        let metrics_label = Some(if active_session || self.recorder_state.is_recording() {
-            self.metrics
-                .as_ref()
-                .map(metrics_label)
-                .unwrap_or_else(zero_metrics_label)
-        } else {
-            zero_metrics_label()
-        });
-
-        div()
-            .id("wrec-root")
-            .on_action(cx.listener(WrecApp::on_minimize_action))
-            .on_action(cx.listener(WrecApp::on_quit_action))
-            .relative()
-            .size_full()
-            .min_w(px(0.))
-            .min_h(px(0.))
-            .overflow_hidden()
-            .rounded_lg()
-            .border_1()
-            .border_color(border)
-            .bg(background)
-            .text_color(foreground)
-            .text_size(px(15.))
-            .font_weight(FontWeight::SEMIBOLD)
-            .flex()
-            .flex_col()
-            .child(self.render_title_bar(cx))
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_h(px(0.))
-                    .child(self.render_sidebar(cx))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_w(px(0.))
-                            .pt_4()
-                            .pb_4()
-                            .pl_4()
-                            .pr_3()
-                            .child(div().id("tab-content").flex().flex_col().flex_1().map(
-                                |this| match self.active_tab {
-                                    AppTab::General => this.child(self.render_general_tab(
-                                        record_icon,
-                                        record_label,
-                                        record_tip,
-                                        record_is_idle,
-                                        record_disabled,
-                                        active_session,
-                                        pause_icon,
-                                        pause_label,
-                                        pause_tip,
-                                        pause_disabled,
-                                        controls_disabled,
-                                        muted_foreground,
-                                        cx,
-                                    )),
-                                    AppTab::Settings => this.child(self.render_settings_tab(
-                                        controls_disabled,
-                                        muted_foreground,
-                                        cx,
-                                    )),
-                                    AppTab::Cli => {
-                                        this.child(self.render_cli_tab(muted_foreground, cx))
-                                    }
-                                    AppTab::Nerd if self.show_nerd_logs => this.child(
-                                        self.render_nerds_tab(metrics_label, muted_foreground, cx),
-                                    ),
-                                    AppTab::Nerd => this.child(self.render_settings_tab(
-                                        controls_disabled,
-                                        muted_foreground,
-                                        cx,
-                                    )),
-                                    AppTab::About => {
-                                        this.child(self.render_about_tab(muted_foreground, cx))
-                                    }
-                                },
-                            )),
-                    ),
-            )
-            .children(notification_layer)
-    }
-}
-
-type SidebarClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
-
-/// Toned-down "on" color for switches — pure-white (primary) reads too loud on
-/// the pitch-black background, so use a soft gray in dark mode.
-fn switch_on_color(cx: &Context<WrecApp>) -> Hsla {
-    if cx.theme().mode.is_dark() {
-        Hsla::from(rgb(0xb0b0b8))
-    } else {
-        cx.theme().primary
-    }
-}
-
-#[derive(Clone)]
-struct WrecSidebarNav {
-    items: Vec<WrecSidebarNavItem>,
-}
-
-#[derive(Clone)]
-struct WrecSidebarNavItem {
-    label: &'static str,
-    icon: PhosphorIcon,
-    tab: AppTab,
-    active: bool,
-    on_click: SidebarClickHandler,
-}
-
-impl WrecSidebarNav {
-    fn render(self, id: impl Into<ElementId>, cx: &mut Context<WrecApp>) -> impl IntoElement {
-        div()
-            .id(id.into())
-            .flex()
-            .flex_col()
-            .w_full()
-            .h_full()
-            .text_color(cx.theme().sidebar_foreground)
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .children(self.items.into_iter().map(|item| sidebar_nav_row(item, cx))),
-            )
-    }
-}
-
-fn sidebar_nav_item(
-    label: &'static str,
-    icon: PhosphorIcon,
-    tab: AppTab,
-    active: bool,
-    cx: &mut Context<WrecApp>,
-) -> WrecSidebarNavItem {
-    let on_click = Rc::new(cx.listener(move |this, _, _, cx| {
-        if this.active_tab != tab {
-            this.active_tab = tab;
-            cx.notify();
-        }
-    }));
-
-    WrecSidebarNavItem {
-        label,
-        icon,
-        tab,
-        active,
-        on_click,
-    }
-}
-
-fn sidebar_nav_row(item: WrecSidebarNavItem, cx: &mut Context<WrecApp>) -> impl IntoElement {
-    // Clean filled pill, inset from the sidebar edges, for the selected/hovered item.
-    let active_bg = cx.theme().accent;
-    let hover_bg = cx.theme().muted;
-    let color = if item.active {
-        cx.theme().sidebar_accent_foreground
-    } else {
-        cx.theme().sidebar_foreground
-    };
-    let icon_color = if item.active {
-        cx.theme().sidebar_accent_foreground
-    } else {
-        cx.theme().muted_foreground
-    };
-    let on_click = item.on_click.clone();
-
-    div()
-        .id(format!("sidebar-nav-{}", item.tab.id()))
-        .flex()
-        .items_center()
-        .w_full()
-        .px_2()
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2p5()
-                .w_full()
-                .h(px(CONTROL_HEIGHT))
-                .px_2p5()
-                .rounded_lg()
-                .text_base()
-                .font_weight(if item.active {
-                    FontWeight::BOLD
-                } else {
-                    FontWeight::SEMIBOLD
-                })
-                .text_color(color)
-                .cursor_pointer()
-                .when(item.active, |this| {
-                    this.bg(active_bg)
-                        .text_color(cx.theme().sidebar_accent_foreground)
-                })
-                .when(!item.active, |this| {
-                    this.hover(|this| {
-                        this.bg(hover_bg)
-                            .text_color(cx.theme().sidebar_accent_foreground)
-                    })
-                })
-                .child(
-                    UiIcon::new(item.icon)
-                        .size(px(16.))
-                        .text_color(icon_color)
-                        .flex_shrink_0(),
-                )
-                .child(div().flex_1().min_w(px(0.)).truncate().child(item.label)),
-        )
-        .on_click(move |event, window, cx| {
-            on_click(event, window, cx);
-        })
-}
-
-fn permission_state_button(
-    status: ScreenRecordingPermissionStatus,
-    busy: bool,
-    cx: &mut Context<WrecApp>,
-) -> UiButton {
-    let label = if busy {
-        "Checking"
-    } else if status.is_granted() {
-        "Granted"
-    } else {
-        "Grant"
-    };
-    let tooltip = if status.is_granted() {
-        "Screen Recording permission granted"
-    } else {
-        "Grant Screen Recording permission"
-    };
-    let button = UiButton::new("settings-screen-recording-state")
-        .compact()
-        .secondary()
-        .h(px(CONTROL_HEIGHT))
-        .font_weight(FontWeight::SEMIBOLD)
-        .label(label)
-        .tooltip(tooltip)
-        .disabled(busy || status.is_granted())
-        .on_click(cx.listener(|this, _, _, cx| {
-            this.request_screen_recording_permission(cx);
-        }));
-
-    if !busy && !status.is_granted() {
-        button.primary()
-    } else {
-        button
-    }
-}
-
-fn record_button(
-    icon: PhosphorIcon,
-    label: &'static str,
-    tooltip: &'static str,
-    is_idle: bool,
-    disabled: bool,
-    cx: &mut Context<WrecApp>,
-) -> UiButton {
-    let theme = cx.theme();
-    let button = UiButton::new("record-button")
-        .h(px(RECORD_BUTTON_HEIGHT))
-        .font_weight(FontWeight::SEMIBOLD)
-        .icon(UiIcon::new(icon).text_color(if is_idle {
-            theme.button_primary_foreground
-        } else {
-            theme.danger_foreground
-        }))
-        .label(label)
-        .tooltip(tooltip)
-        .disabled(disabled)
-        .on_click(cx.listener(|this, _, window, cx| {
-            this.toggle_recording(window, cx);
-            cx.notify();
-        }));
-
-    if is_idle {
-        button.primary()
-    } else {
-        button.danger()
-    }
-}
-
-fn pause_button(
-    icon: PhosphorIcon,
-    label: &'static str,
-    tooltip: &'static str,
-    disabled: bool,
-    cx: &mut Context<WrecApp>,
-) -> UiButton {
-    UiButton::new("pause-button")
-        .secondary()
-        .h(px(RECORD_BUTTON_HEIGHT))
-        .font_weight(FontWeight::SEMIBOLD)
-        .icon(UiIcon::new(icon).text_color(cx.theme().muted_foreground))
-        .label(label)
-        .tooltip(tooltip)
-        .disabled(disabled)
-        .on_click(cx.listener(|this, _, window, cx| {
-            this.toggle_pause(window, cx);
-            cx.notify();
-        }))
-}
-
-fn field_label(label: &'static str, color: Hsla) -> Div {
-    div().w(px(FIELD_LABEL_WIDTH)).flex_none().child(
-        Label::new(label)
-            .text_base()
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(color),
-    )
-}
-
-fn row_label(label: &'static str) -> Div {
-    div()
-        .text_base()
-        .font_weight(FontWeight::SEMIBOLD)
-        .child(label)
-}
-
-fn labeled_select_row(label: &'static str, color: Hsla, select: impl IntoElement) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap_3()
-        .min_w(px(0.))
-        .child(field_label(label, color))
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .h(px(CONTROL_HEIGHT))
-                .child(select),
-        )
-}
-
-fn theme_toggle(is_dark: bool, cx: &mut Context<WrecApp>) -> impl IntoElement {
-    UiButton::new("theme-mode")
-        .ghost()
-        .compact()
-        .size(px(30.))
-        .icon(UiIcon::new(if is_dark {
-            PhosphorIcon::Moon
-        } else {
-            PhosphorIcon::Sun
-        }))
-        .tooltip(if is_dark {
-            "Switch to light mode"
-        } else {
-            "Switch to dark mode"
-        })
-        .on_click(cx.listener(move |_, _, window, cx| {
-            let mode = if is_dark {
-                ThemeMode::Light
-            } else {
-                ThemeMode::Dark
-            };
-            change_theme(mode, Some(window), cx);
-            cx.notify();
-        }))
-}
-
-fn switch_row(label: &'static str, value: &'static str, value_color: Hsla, switch: Switch) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .w_full()
-        .h(px(CONTROL_HEIGHT))
-        .gap_3()
-        .child(
-            div()
-                .flex()
-                .items_baseline()
-                .gap_2()
-                .min_w(px(0.))
-                .child(row_label(label))
-                .child(div().text_sm().text_color(value_color).child(value)),
-        )
-        .child(switch)
-}
-
-fn label_switch_row(label: &'static str, color: Hsla, switch: Switch) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .w_full()
-        .h(px(CONTROL_HEIGHT))
-        .gap_3()
-        .child(field_label(label, color))
-        .child(switch)
-}
-
-fn plain_info_row(label: &'static str, value: impl Into<SharedString>, value_color: Hsla) -> Div {
-    let value = value.into();
-
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .w_full()
-        .min_h(px(CONTROL_HEIGHT))
-        .gap_3()
-        .child(row_label(label))
-        .child(
-            div()
-                .min_w(px(0.))
-                .text_sm()
-                .text_color(value_color)
-                .truncate()
-                .child(value),
-        )
-}
-
-pub(crate) fn fps_label(fps: FrameRate) -> &'static str {
-    match fps {
-        FrameRate::Fps60 => "60 FPS",
-        FrameRate::Fps30 => "30 FPS",
-    }
-}
-
-pub(crate) fn push_app_notification(window: &mut Window, notification: Notification, cx: &mut App) {
-    window.push_notification(
-        notification
-            .w(px(NOTIFICATION_WIDTH))
-            .min_h(px(44.))
-            .py_2p5()
-            .pl_4()
-            .pr(px(34.))
-            .gap_2(),
-        cx,
-    );
-}
-
-pub(crate) fn configure_notifications(cx: &mut App) {
-    let notification = &mut Theme::global_mut(cx).notification;
-    notification.placement = Anchor::BottomRight;
-    notification.margins.top = px(8.);
-    notification.margins.right = px(8.);
-    notification.margins.bottom = px(8.);
-    notification.margins.left = px(8.);
-}
-
-pub(crate) fn change_theme(mode: ThemeMode, window: Option<&mut Window>, cx: &mut App) {
-    match window {
-        Some(window) => {
-            Theme::change(mode, Some(&mut *window), cx);
-            apply_wrec_theme(cx);
-            window.refresh();
-        }
-        None => {
-            Theme::change(mode, None, cx);
-            apply_wrec_theme(cx);
-        }
-    }
-}
-
-fn apply_wrec_theme(cx: &mut App) {
-    let theme = Theme::global_mut(cx);
-    let palette = if theme.mode.is_dark() {
-        DARK_PALETTE
-    } else {
-        LIGHT_PALETTE
-    };
-    let color = |hex| Hsla::from(rgb(hex));
-
-    theme.font_family = GEIST_FONT_FAMILY.into();
-    theme.mono_font_family = GEIST_MONO_FONT_FAMILY.into();
-    theme.font_size = px(14.);
-    // Flat, clean look: rounded-rectangle corners and no shadows anywhere.
-    theme.radius = px(8.);
-    theme.radius_lg = px(12.);
-    theme.shadow = false;
-
-    theme.background = color(palette.background);
-    theme.foreground = color(palette.foreground);
-    theme.group_box = color(palette.card);
-    theme.group_box_foreground = color(palette.card_foreground);
-    theme.popover = color(palette.popover);
-    theme.popover_foreground = color(palette.popover_foreground);
-    theme.primary = color(palette.primary);
-    // Explicit hover/active ramp, following gpui-component's own convention
-    // (filled buttons shift their own lightness on interaction) instead of a
-    // derived mix — `primary` equals `foreground` here so a mix would be a no-op.
-    theme.primary_hover = color(palette.primary_hover);
-    theme.primary_active = color(palette.primary_active);
-    theme.primary_foreground = color(palette.primary_foreground);
-    theme.secondary = color(palette.secondary);
-    theme.secondary_hover = color(palette.secondary_hover);
-    theme.secondary_active = color(palette.secondary_active);
-    theme.secondary_foreground = color(palette.secondary_foreground);
-    theme.muted = color(palette.muted);
-    theme.muted_foreground = color(palette.muted_foreground);
-    theme.accent = color(palette.accent);
-    theme.accent_foreground = color(palette.accent_foreground);
-    theme.danger = color(palette.destructive);
-    theme.danger_hover = theme.danger.mix(theme.background, 0.14);
-    theme.danger_active = theme.danger.mix(theme.background, 0.24);
-    theme.danger_foreground = color(palette.destructive_foreground);
-    theme.border = color(palette.border);
-    theme.input = color(palette.input);
-    // Neutral focus ring / caret — no colored accent on focused controls.
-    theme.ring = theme.border;
-    theme.caret = theme.foreground;
-    theme.chart_1 = color(palette.chart_1);
-    theme.chart_2 = color(palette.chart_2);
-    theme.chart_3 = color(palette.chart_3);
-    theme.chart_4 = color(palette.chart_4);
-    theme.chart_5 = color(palette.chart_5);
-    theme.sidebar = color(palette.sidebar);
-    theme.sidebar_foreground = color(palette.sidebar_foreground);
-    theme.sidebar_primary = color(palette.sidebar_primary);
-    theme.sidebar_primary_foreground = color(palette.sidebar_primary_foreground);
-    theme.sidebar_accent = color(palette.sidebar_accent);
-    theme.sidebar_accent_foreground = color(palette.sidebar_accent_foreground);
-    theme.sidebar_border = color(palette.sidebar_border);
-    theme.button_primary = theme.primary;
-    theme.button_primary_hover = theme.primary_hover;
-    theme.button_primary_active = theme.primary_active;
-    theme.button_primary_foreground = theme.primary_foreground;
-    theme.colors.list = theme.popover;
-    theme.list_hover = theme.accent;
-    theme.list_active = theme.accent;
-    theme.list_active_border = theme.border;
-    theme.list_even = theme.popover;
-    theme.list_head = theme.muted;
-    theme.table = color(palette.card);
-    theme.table_head = theme.muted;
-    theme.table_head_foreground = theme.muted_foreground;
-    theme.table_hover = theme.accent;
-    theme.table_active = theme.accent;
-    theme.table_active_border = theme.border;
-    theme.table_even = color(palette.card);
-    theme.table_row_border = theme.border;
-    theme.tiles = color(palette.card);
-    theme.title_bar = theme.background;
-    theme.title_bar_border = theme.border;
-    theme.tab_bar = theme.background;
-    theme.tab_bar_segmented = theme.muted;
-    theme.tab = Hsla::transparent_black();
-    theme.tab_active = theme.accent;
-    theme.tab_active_foreground = theme.accent_foreground;
-    theme.tab_foreground = theme.muted_foreground;
-    // Off-state track: `muted` is nearly invisible against the pitch-black
-    // background, so use a clearly visible neutral gray in each mode.
-    theme.switch = if theme.mode.is_dark() {
-        color(0x3f3f46)
-    } else {
-        color(0xd4d4d8)
-    };
-    theme.switch_thumb = theme.popover;
-    theme.skeleton = theme.muted;
-    theme.slider_bar = theme.primary;
-    theme.slider_thumb = theme.primary_foreground;
-    theme.progress_bar = theme.primary;
-    theme.selection = theme.foreground.opacity(0.14);
-    theme.link = theme.primary;
-    theme.link_hover = theme.primary_hover;
-    theme.link_active = theme.primary_active;
-}
-
-pub(crate) fn target_key(target: &CaptureTarget) -> String {
-    let kind = match target.kind {
-        CaptureSourceKind::Display => "display",
-        CaptureSourceKind::Window => "window",
-    };
-    format!("{kind}:{}", target.id)
-}
-
-fn metrics_label(metrics: &RecorderMetrics) -> String {
-    format!(
-        "{}s  {:.1} MB  {:.1} Mbps",
-        metrics.elapsed_secs,
-        metrics.output_bytes as f32 / 1_000_000.,
-        metrics.estimated_bitrate_mbps
-    )
-}
-
-fn zero_metrics_label() -> String {
-    "0s  0.0 MB  0.0 Mbps".to_string()
-}
-
 pub(crate) fn resolution_label(resolution: Resolution) -> &'static str {
     match resolution {
         Resolution::Native => "Original",
@@ -1433,4 +32,556 @@ pub(crate) fn resolution_label(resolution: Resolution) -> &'static str {
         Resolution::R2k => "2K",
         Resolution::R4k => "4K",
     }
+}
+
+pub(crate) fn target_key(target: &domain::CaptureTarget) -> String {
+    let kind = match target.kind {
+        domain::CaptureSourceKind::Display => "display",
+        domain::CaptureSourceKind::Window => "window",
+    };
+    format!("{kind}:{}", target.id)
+}
+
+// ── Entry point ──
+
+pub(crate) fn render(app: &mut WrecApp, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    // Title bar
+    egui::TopBottomPanel::top("title_bar")
+        .min_height(36.0)
+        .show(ctx, |ui| {
+            render_title_bar(app, ui);
+        });
+
+    // Body
+    egui::CentralPanel::default().show(ctx, |ui| {
+        match app.active_tab {
+            AppTab::General => render_home(app, ui),
+            AppTab::Settings => render_settings(app, ui),
+            AppTab::Cli => render_cli(app, ui),
+            AppTab::Nerd if app.show_nerd_logs => render_nerd(app, ui),
+            AppTab::Nerd => render_settings(app, ui),
+            AppTab::About => render_about(app, ui),
+        }
+    });
+
+    // Error dialog
+    if app.show_error_dialog {
+        egui::Window::new("Error")
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .collapsible(false)
+            .resizable(false)
+            .auto_sized()
+            .show(ctx, |ui| {
+                ui.label(&app.error_dialog_message);
+                ui.horizontal(|ui| {
+                    ui.add_space(ui.available_width() - 50.0);
+                    if ui.button("OK").clicked() {
+                        app.show_error_dialog = false;
+                    }
+                });
+            });
+    }
+
+    // Quit dialog
+    if app.show_quit_dialog {
+        egui::Window::new("Recording in progress")
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .collapsible(false)
+            .resizable(false)
+            .auto_sized()
+            .show(ctx, |ui| {
+                ui.label("Stop the current recording, save it, and quit Wrec?");
+                ui.horizontal(|ui| {
+                    if ui.button("Stop recording & quit").clicked() {
+                        app.confirm_quit();
+                    }
+                    if ui.button("Cancel").clicked() {
+                        app.show_quit_dialog = false;
+                    }
+                });
+            });
+    }
+
+    // Notification toast
+    if let Some((ref message, _)) = app.notification_message {
+        egui::Area::new(egui::Id::new("notification"))
+            .anchor(egui::Align2::RIGHT_BOTTOM, [-12.0, -12.0])
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style())
+                    .show(ui, |ui| {
+                        ui.label(message);
+                    });
+            });
+    }
+}
+
+// ── Title bar ──
+
+fn render_title_bar(app: &mut WrecApp, ui: &mut egui::Ui) {
+    ui.horizontal(|ui| {
+        ui.add_space(72.0);
+
+        if app.active_tab != AppTab::General {
+            if ui.button("\u{2190} Back").clicked() {
+                app.active_tab = AppTab::General;
+            }
+        }
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Theme toggle
+            let theme_label = if app.is_dark_mode { "\u{2600}" } else { "\u{1F319}" };
+            if ui.button(theme_label).clicked() {
+                app.is_dark_mode = !app.is_dark_mode;
+                ui.ctx().set_visuals(if app.is_dark_mode {
+                    egui::Visuals::dark()
+                } else {
+                    egui::Visuals::light()
+                });
+            }
+
+            // Gear menu
+            egui::menu::menu_button(ui, "\u{2699}", |ui| {
+                if ui.button("Settings").clicked() {
+                    app.active_tab = AppTab::Settings;
+                    ui.close_menu();
+                }
+                if ui.button("CLI").clicked() {
+                    app.active_tab = AppTab::Cli;
+                    ui.close_menu();
+                }
+                if app.show_nerd_logs {
+                    if ui.button("Nerd").clicked() {
+                        app.active_tab = AppTab::Nerd;
+                        ui.close_menu();
+                    }
+                }
+                if ui.button("About").clicked() {
+                    app.active_tab = AppTab::About;
+                    ui.close_menu();
+                }
+            });
+        });
+    });
+}
+
+// ── Home ──
+
+fn render_home(app: &mut WrecApp, ui: &mut egui::Ui) {
+    ui.vertical_centered(|ui| {
+        // Source & Target row
+        ui.horizontal(|ui| {
+            ui.scope(|ui| {
+                ui.vertical(|ui| {
+                    ui.label("Source");
+                    let mut source = app.settings.source;
+                    egui::ComboBox::from_id_salt("source")
+                        .selected_text(app.source_label())
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut source,
+                                CaptureSourceKind::Display,
+                                "Display",
+                            );
+                            ui.selectable_value(
+                                &mut source,
+                                CaptureSourceKind::Window,
+                                "Window",
+                            );
+                        });
+                    if source != app.settings.source {
+                        app.set_source(source);
+                    }
+                });
+                ui.add_space(8.0);
+                ui.vertical(|ui| {
+                    ui.label("Target");
+                    let targets = app.targets_for_source();
+                    let selected_text = app
+                        .selected_target_name()
+                        .unwrap_or_else(|| "Select...".to_string());
+                    egui::ComboBox::from_id_salt("target")
+                        .selected_text(selected_text)
+                        .show_ui(ui, |ui| {
+                            for target in &targets {
+                                let key = target_key(target);
+                                let is_selected = app
+                                    .selected_target_key
+                                    .as_deref()
+                                    == Some(&key);
+                                if ui.selectable_label(is_selected, &target.name).clicked() {
+                                    app.set_target_key(key);
+                                }
+                            }
+                        });
+                });
+            });
+        });
+
+        ui.add_space(12.0);
+
+        // Format & Preset row
+        ui.horizontal(|ui| {
+            ui.scope(|ui| {
+                ui.vertical(|ui| {
+                    ui.label("Format");
+                    let mut codec = app.settings.codec;
+                    egui::ComboBox::from_id_salt("format")
+                        .selected_text(match codec {
+                            Codec::Hevc => "HEVC",
+                            Codec::H264 => "H.264",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut codec, Codec::Hevc, "HEVC");
+                            ui.selectable_value(&mut codec, Codec::H264, "H.264");
+                        });
+                    if codec != app.settings.codec {
+                        app.set_codec(codec);
+                    }
+                });
+                ui.add_space(8.0);
+                ui.vertical(|ui| {
+                    ui.label("Preset");
+                    let mut quality = app.settings.quality;
+                    egui::ComboBox::from_id_salt("quality")
+                        .selected_text(match quality {
+                            Quality::Balanced => "Balanced",
+                            Quality::Efficient => "Efficient",
+                            Quality::High => "High",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut quality, Quality::Balanced, "Balanced");
+                            ui.selectable_value(&mut quality, Quality::Efficient, "Efficient");
+                            ui.selectable_value(&mut quality, Quality::High, "High");
+                        });
+                    if quality != app.settings.quality {
+                        app.set_quality(quality);
+                    }
+                });
+            });
+        });
+
+        ui.add_space(8.0);
+
+        // Resolution & FPS row
+        ui.horizontal(|ui| {
+            ui.scope(|ui| {
+                ui.vertical(|ui| {
+                    ui.label("Resolution");
+                    let mut resolution = app.settings.resolution;
+                    let res_disabled =
+                        |r: Resolution| resolution_disabled(app.settings.quality, r);
+                    egui::ComboBox::from_id_salt("resolution")
+                        .selected_text(resolution_label(resolution))
+                        .show_ui(ui, |ui| {
+                            for (res, label) in [
+                                (Resolution::Native, "Original"),
+                                (Resolution::R4k, "4K"),
+                                (Resolution::R2k, "2K"),
+                                (Resolution::R1080p, "1080p"),
+                                (Resolution::R720p, "720p"),
+                            ] {
+                                let disabled = res_disabled(res);
+                                let resp = ui.add_enabled(!disabled, egui::SelectableLabel::new(
+                                    resolution == res,
+                                    label,
+                                ));
+                                if resp.clicked() {
+                                    resolution = res;
+                                }
+                            }
+                        });
+                    if resolution != app.settings.resolution {
+                        app.set_resolution(resolution);
+                    }
+                });
+                ui.add_space(8.0);
+                ui.vertical(|ui| {
+                    ui.label("Frame Rate");
+                    let mut fps = app.settings.fps;
+                    let fps_disabled = |f: FrameRate| {
+                        f.capped_at(app.settings.quality.max_fps()) != f
+                    };
+                    egui::ComboBox::from_id_salt("fps")
+                        .selected_text(match fps {
+                            FrameRate::Fps60 => "60 FPS",
+                            FrameRate::Fps30 => "30 FPS",
+                        })
+                        .show_ui(ui, |ui| {
+                            for (fr, label) in [
+                                (FrameRate::Fps60, "60 FPS"),
+                                (FrameRate::Fps30, "30 FPS"),
+                            ] {
+                                let disabled = fps_disabled(fr);
+                                let resp = ui.add_enabled(!disabled, egui::SelectableLabel::new(
+                                    fps == fr,
+                                    label,
+                                ));
+                                if resp.clicked() {
+                                    fps = fr;
+                                }
+                            }
+                        });
+                    if fps != app.settings.fps {
+                        app.set_fps(fps);
+                    }
+                });
+            });
+        });
+
+        ui.add_space(8.0);
+
+        // Cursor & Audio toggles
+        ui.horizontal(|ui| {
+            let mut cursor = app.settings.include_cursor;
+            if ui.checkbox(&mut cursor, "Cursor").changed() {
+                app.set_include_cursor(cursor);
+            }
+            ui.add_space(16.0);
+            let mut audio = app.settings.include_system_audio;
+            if ui.checkbox(&mut audio, "System Audio").changed() {
+                app.set_include_system_audio(audio);
+            }
+        });
+
+        // Push record button to center of remaining space
+        ui.add_space(ui.available_height() * 0.25);
+
+        // Record / Stop button
+        let is_active = app.recorder_state.is_active_session();
+        let show_pause = app.recorder_state.is_recording() || app.recorder_state.is_paused();
+        let record_label = if is_active {
+            if app.recorder_state.is_paused() {
+                "Resume"
+            } else {
+                "Stop"
+            }
+        } else {
+            "Record"
+        };
+        let record_disabled = matches!(
+            app.recorder_state,
+            RecorderState::Starting
+                | RecorderState::Pausing
+                | RecorderState::Resuming
+                | RecorderState::Stopping
+        ) || (!is_active
+            && (app.permission_busy || !app.permission_status.is_granted()));
+
+        if show_pause {
+            ui.horizontal(|ui| {
+                ui.add_space(ui.available_width() * 0.25);
+                let pause_label = if app.recorder_state.is_paused() {
+                    "Resume"
+                } else {
+                    "Pause"
+                };
+                let pause_disabled = matches!(
+                    app.recorder_state,
+                    RecorderState::Pausing
+                        | RecorderState::Resuming
+                        | RecorderState::Stopping
+                );
+                if ui
+                    .add_enabled(
+                        !pause_disabled,
+                        egui::Button::new(pause_label).min_size(egui::vec2(110.0, 42.0)),
+                    )
+                    .clicked()
+                {
+                    app.toggle_pause();
+                }
+                if ui
+                    .add_enabled(
+                        !record_disabled,
+                        egui::Button::new(record_label).min_size(egui::vec2(110.0, 42.0)),
+                    )
+                    .clicked()
+                {
+                    app.toggle_recording();
+                }
+            });
+        } else {
+            if ui
+                .add_enabled(
+                    !record_disabled,
+                    egui::Button::new(record_label).min_size(egui::vec2(240.0, 42.0)),
+                )
+                .clicked()
+            {
+                app.toggle_recording();
+            }
+        }
+
+        ui.add_space(4.0);
+        ui.label(&app.status);
+    });
+}
+
+// ── Settings ──
+
+fn render_settings(app: &mut WrecApp, ui: &mut egui::Ui) {
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        ui.vertical(|ui| {
+            // Screen Recording permission
+            ui.horizontal(|ui| {
+                ui.label("Screen Recording");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let label = if app.permission_busy {
+                        "Checking"
+                    } else if app.permission_status.is_granted() {
+                        "Granted"
+                    } else {
+                        "Grant"
+                    };
+                    if ui
+                        .button(label)
+                        .on_disabled_hover_text("Already granted")
+                        .clicked()
+                    {
+                        app.request_screen_recording_permission();
+                    }
+                });
+            });
+
+            ui.separator();
+
+            // Hide wrec
+            ui.horizontal(|ui| {
+                let mut hide = app.settings.hide_wrec;
+                if ui.checkbox(&mut hide, "Hide wrec from recording").changed() {
+                    app.set_hide_wrec(hide);
+                }
+            });
+
+            // Logs
+            ui.horizontal(|ui| {
+                let mut logs = app.show_nerd_logs;
+                if ui.checkbox(&mut logs, "Show Nerd tab").changed() {
+                    app.set_show_nerd_logs(logs);
+                }
+            });
+
+            ui.separator();
+
+            // Output path
+            ui.horizontal(|ui| {
+                ui.label("Output folder");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Open").clicked() {
+                        app.open_last_recording_dir();
+                    }
+                    if ui.button("Choose").clicked() {
+                        app.choose_output_dir_interactive();
+                    }
+                });
+            });
+            let mut output = app.settings.output_dir.display().to_string();
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut output)
+                        .hint_text("Output folder"),
+                )
+                .changed()
+            {
+                let path = std::path::PathBuf::from(output.trim());
+                if !output.trim().is_empty() {
+                    app.set_output_dir(path);
+                }
+            }
+
+            // Refresh targets
+            ui.separator();
+            if ui.button("Refresh capture targets").clicked() {
+                app.refresh_targets();
+            }
+        });
+    });
+}
+
+// ── CLI ──
+
+fn render_cli(app: &mut WrecApp, ui: &mut egui::Ui) {
+    ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            ui.label("Status");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(app.cli_install_status.label());
+                if ui.button("\u{21BB}").clicked() {
+                    app.refresh_cli_install_status();
+                }
+            });
+        });
+
+        ui.separator();
+
+        if app.cli_install_command().is_some() {
+            ui.horizontal(|ui| {
+                ui.label("Install command");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Copy").clicked() {
+                        app.copy_cli_install_command();
+                        if let Some(cmd) = app.cli_install_command() {
+                            ui.ctx().copy_text(cmd);
+                        }
+                    }
+                });
+            });
+        }
+    });
+}
+
+// ── Nerd ──
+
+fn render_nerd(app: &mut WrecApp, ui: &mut egui::Ui) {
+    ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            ui.label("Logs");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Open").clicked() {
+                    app.open_recordings_data_dir();
+                }
+            });
+        });
+
+        ui.separator();
+
+        // Metrics
+        ui.vertical_centered(|ui| {
+            ui.add_space(40.0);
+            ui.heading(&app.metrics_label());
+        });
+
+        ui.separator();
+
+        // Log entries
+        egui::ScrollArea::vertical()
+            .max_height(200.0)
+            .show(ui, |ui| {
+                for log in app.logs.iter().rev().take(20) {
+                    ui.label(log);
+                }
+            });
+    });
+}
+
+// ── About ──
+
+fn render_about(app: &mut WrecApp, ui: &mut egui::Ui) {
+    ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            ui.label("Version");
+            ui.with_layout(
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    ui.label(env!("CARGO_PKG_VERSION"));
+                },
+            );
+        });
+
+        ui.separator();
+
+        if ui.button("GitHub").clicked() {
+            app.open_url(crate::app::GITHUB_URL);
+        }
+    });
 }

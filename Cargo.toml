@@ -25,11 +25,6 @@ thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# UI
-gpui = { git = "https://github.com/zed-industries/zed", package = "gpui" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", package = "gpui_platform", features = ["font-kit"] }
-gpui-component = { git = "https://github.com/longbridge/gpui-component", package = "gpui-component" }
-
 # macOS/native bindings
 objc2 = "0.6"
 objc2-foundation = "0.3"
