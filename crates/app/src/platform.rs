@@ -120,11 +120,29 @@ pub(crate) fn open_url(url: &str) -> std::io::Result<()> {
     }
 }
 
+pub(crate) fn set_window_capture_excluded(
+    window: &mut gpui::Window,
+    excluded: bool,
+) -> Result<(), String> {
+    set_window_capture_excluded_impl(window, excluded)
+}
+
 #[cfg(target_os = "windows")]
-pub(crate) fn set_window_capture_excluded(hwnd: isize, excluded: bool) -> Result<(), String> {
+fn set_window_capture_excluded_impl(
+    window: &mut gpui::Window,
+    excluded: bool,
+) -> Result<(), String> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use windows::Win32::{
         Foundation::HWND,
         UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE},
+    };
+
+    let handle = window
+        .window_handle()
+        .map_err(|err| format!("window handle unavailable: {err}"))?;
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return Err("window is not backed by a Win32 HWND".into());
     };
 
     let affinity = if excluded {
@@ -132,12 +150,15 @@ pub(crate) fn set_window_capture_excluded(hwnd: isize, excluded: bool) -> Result
     } else {
         WDA_NONE
     };
-    unsafe { SetWindowDisplayAffinity(HWND(hwnd as *mut c_void), affinity) }
+    unsafe { SetWindowDisplayAffinity(HWND(handle.hwnd.get() as *mut c_void), affinity) }
         .map_err(|err| format!("SetWindowDisplayAffinity failed: {err}"))
 }
 
 #[cfg(not(target_os = "windows"))]
-pub(crate) fn set_window_capture_excluded(_hwnd: isize, _excluded: bool) -> Result<(), String> {
+fn set_window_capture_excluded_impl(
+    _window: &mut gpui::Window,
+    _excluded: bool,
+) -> Result<(), String> {
     Ok(())
 }
 

@@ -506,7 +506,7 @@ fn daemon_executable_launch(path: PathBuf) -> Option<DaemonLaunch> {
         );
     }
 
-    #[cfg(all(target_os = "windows", not(debug_assertions)))]
+    #[cfg(target_os = "windows")]
     if cargo_profile_dir(&path).is_some() {
         return None;
     }
