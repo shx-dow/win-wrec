@@ -1,6 +1,7 @@
 use crate::{
     platform::{choose_output_dir, open_path, CliInstallStatus},
     ui::{
+        control_window::{ControlWindow, ControlWindowState},
         fps_disabled, fps_label, fps_options_for, metrics_label, push_app_notification,
         resolution_disabled, resolution_label, resolution_options_for, target_key,
         zero_metrics_label, AppTab, ControlSelect, LimitedOption, LimitedSelect, TargetOption,
@@ -29,6 +30,7 @@ use gpui_component::{
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -124,6 +126,8 @@ pub(crate) struct WrecApp {
     pub(crate) output_input: Entity<InputState>,
     _event_task: Task<()>,
     pub(crate) cached_metrics_label: String,
+    control_window: Option<AnyWindowHandle>,
+    control_window_state: Option<Arc<Mutex<ControlWindowState>>>,
 }
 
 impl WrecApp {
@@ -257,6 +261,8 @@ impl WrecApp {
             output_input,
             _event_task: event_task,
             cached_metrics_label: zero_metrics_label(),
+            control_window: None,
+            control_window_state: None,
         };
         app.refresh_permission_status(true, cx);
         app
@@ -1141,6 +1147,7 @@ impl WrecApp {
                     .as_ref()
                     .map(metrics_label)
                     .unwrap_or_else(zero_metrics_label);
+                self.update_control_window(cx);
             }
         }
 
@@ -1152,6 +1159,8 @@ impl WrecApp {
                     .as_ref()
                     .map(|target| format!("Starting {}", target.name))
                     .unwrap_or_else(|| "Starting".to_string());
+                self.open_control_window(window, cx);
+                self.update_control_window(cx);
             }
             JobStatus::Recording => {
                 self.recorder_state = RecorderState::Recording;
@@ -1160,16 +1169,20 @@ impl WrecApp {
                     .as_ref()
                     .map(|path| format!("Recording to {}", path.display()))
                     .unwrap_or_else(|| "Recording".to_string());
+                self.open_control_window(window, cx);
+                self.update_control_window(cx);
             }
             JobStatus::Paused => {
                 self.recorder_state = RecorderState::Paused;
                 self.status = "Paused".to_string();
+                self.update_control_window(cx);
             }
             JobStatus::Finishing => {
                 self.recorder_state = RecorderState::Stopping;
                 self.status = "Stopping".to_string();
             }
             JobStatus::Completed => {
+                self.close_control_window(cx);
                 self.set_app_window_capture_excluded(window, false);
                 self.active_job_id = None;
                 self.active_job_event_count = 0;
@@ -1199,6 +1212,7 @@ impl WrecApp {
                 }
             }
             JobStatus::Failed | JobStatus::Cancelled => {
+                self.close_control_window(cx);
                 self.set_app_window_capture_excluded(window, false);
                 let message = latest_error_message(&job).unwrap_or_else(|| {
                     if matches!(job.status, JobStatus::Cancelled) {
@@ -1275,6 +1289,69 @@ impl WrecApp {
                 break;
             }
         });
+    }
+
+    fn open_control_window(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.control_window.is_some() {
+            return;
+        }
+
+        let state = Arc::new(Mutex::new(ControlWindowState {
+            paused: false,
+            elapsed_secs: 0,
+            job_id: self.active_job_id,
+        }));
+        self.control_window_state = Some(state.clone());
+        let daemon = self.daemon.clone();
+
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin: point(px(20.), px(60.)),
+                size: size(px(280.), px(52.)),
+            })),
+            is_resizable: false,
+            is_minimizable: false,
+            focus: false,
+            titlebar: None,
+            window_background: WindowBackgroundAppearance::Opaque,
+            window_min_size: Some(size(px(200.), px(40.))),
+            ..Default::default()
+        };
+
+        let handle: Option<AnyWindowHandle> = cx
+            .open_window(options, |window, cx| {
+                window.set_window_title("wrec control");
+                cx.new(|_cx| ControlWindow::new(state, daemon))
+            })
+            .ok()
+            .map(|h| h.into());
+        self.control_window = handle;
+    }
+
+    fn close_control_window(&mut self, cx: &mut Context<Self>) {
+        if let Some(handle) = self.control_window.take() {
+            let _ = cx.update_window(handle, |_view, window, _cx| {
+                window.remove_window();
+            });
+        }
+        self.control_window_state = None;
+    }
+
+    fn update_control_window(&self, cx: &mut Context<Self>) {
+        if let Some(state) = &self.control_window_state {
+            let mut s = state.lock().unwrap();
+            s.paused = self.recorder_state.is_paused();
+            s.elapsed_secs = self.metrics.as_ref().map(|m| m.elapsed_secs).unwrap_or(0);
+            s.job_id = self.active_job_id;
+            drop(s);
+        }
+        if let Some(handle) = &self.control_window {
+            if let Some(typed) = handle.downcast::<ControlWindow>() {
+                let _ = typed.update(cx, |_ctrl, _window, cx| {
+                    cx.notify();
+                });
+            }
+        }
     }
 
     fn open_last_recording_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {

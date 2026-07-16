@@ -1,3 +1,5 @@
+pub(crate) mod control_window;
+
 use crate::{
     app::WrecApp,
     assets::{PhosphorIcon, GEIST_FONT_FAMILY, GEIST_MONO_FONT_FAMILY},
