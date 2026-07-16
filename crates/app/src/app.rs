@@ -1,9 +1,10 @@
 use crate::{
     platform::{choose_output_dir, open_path, CliInstallStatus},
     ui::{
-        fps_disabled, fps_label, fps_options_for, push_app_notification, resolution_disabled,
-        resolution_label, resolution_options_for, target_key, AppTab, ControlSelect, LimitedOption,
-        LimitedSelect, TargetOption, TargetSelect, CODEC_OPTIONS, QUALITY_OPTIONS, SOURCE_OPTIONS,
+        fps_disabled, fps_label, fps_options_for, metrics_label, push_app_notification,
+        resolution_disabled, resolution_label, resolution_options_for, target_key,
+        zero_metrics_label, AppTab, ControlSelect, LimitedOption, LimitedSelect, TargetOption,
+        TargetSelect, CODEC_OPTIONS, QUALITY_OPTIONS, SOURCE_OPTIONS,
     },
 };
 use config::{save_config as persist_config, wrec_dir, AppConfig};
@@ -122,6 +123,7 @@ pub(crate) struct WrecApp {
     pub(crate) fps_select: Entity<LimitedSelect>,
     pub(crate) output_input: Entity<InputState>,
     _event_task: Task<()>,
+    pub(crate) cached_metrics_label: String,
 }
 
 impl WrecApp {
@@ -254,6 +256,7 @@ impl WrecApp {
             fps_select,
             output_input,
             _event_task: event_task,
+            cached_metrics_label: zero_metrics_label(),
         };
         app.refresh_permission_status(true, cx);
         app
@@ -1130,7 +1133,15 @@ impl WrecApp {
             .rev()
             .find_map(|event| event.metrics.clone())
         {
+            let changed = self.metrics.as_ref().map(|m| m.elapsed_secs) != Some(metrics.elapsed_secs);
             self.metrics = Some(metrics);
+            if changed {
+                self.cached_metrics_label = self
+                    .metrics
+                    .as_ref()
+                    .map(metrics_label)
+                    .unwrap_or_else(zero_metrics_label);
+            }
         }
 
         match job.status {
@@ -1256,7 +1267,7 @@ impl WrecApp {
         let daemon = self.daemon.clone();
         let app_events = self.app_events.clone();
         std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_millis(500));
+            std::thread::sleep(Duration::from_millis(1000));
             let result = daemon.show_job(job_id).map_err(agent_error_message);
             let stop = result.as_ref().map_or(true, |job| is_terminal_job(job));
             let _ = app_events.unbounded_send(UiEvent::App(AppEvent::JobPolled(result)));

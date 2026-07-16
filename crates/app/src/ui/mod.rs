@@ -19,26 +19,23 @@ use gpui_component::{
     ActiveTheme as _, Colorize as _, Disableable as _, Icon as UiIcon, Root, Sizable as _, Theme,
     ThemeMode, WindowExt as _,
 };
-use std::rc::Rc;
-
 pub(crate) type ControlSelect = SelectState<Vec<&'static str>>;
 pub(crate) type LimitedSelect = SelectState<Vec<LimitedOption>>;
 pub(crate) type TargetSelect = SelectState<Vec<TargetOption>>;
 
-pub(crate) const CONTROL_HEIGHT: f32 = 32.;
-const RECORD_BUTTON_HEIGHT: f32 = 42.;
-pub(crate) const WINDOW_WIDTH: f32 = 628.;
-pub(crate) const WINDOW_HEIGHT: f32 = 540.;
-pub(crate) const WINDOW_MIN_WIDTH: f32 = 608.;
-pub(crate) const WINDOW_MIN_HEIGHT: f32 = 500.;
+pub(crate) const CONTROL_HEIGHT: f32 = 30.;
+const RECORD_BUTTON_HEIGHT: f32 = 48.;
+pub(crate) const WINDOW_WIDTH: f32 = 680.;
+pub(crate) const WINDOW_HEIGHT: f32 = 580.;
+pub(crate) const WINDOW_MIN_WIDTH: f32 = 640.;
+pub(crate) const WINDOW_MIN_HEIGHT: f32 = 540.;
 pub(crate) const SOURCE_OPTIONS: [&str; 2] = ["Display", "Window"];
 pub(crate) const CODEC_OPTIONS: [&str; 2] = ["HEVC", "H.264"];
 pub(crate) const QUALITY_OPTIONS: [&str; 3] = ["Balanced", "Efficient", "High"];
 
-const SIDEBAR_WIDTH: f32 = 154.;
+const SIDEBAR_WIDTH: f32 = 140.;
 const TITLE_BAR_HEIGHT: f32 = 40.;
 const NATIVE_WINDOW_CONTROLS_WIDTH: f32 = 72.;
-const FIELD_LABEL_WIDTH: f32 = 96.;
 const NOTIFICATION_WIDTH: f32 = 320.;
 
 #[derive(Clone, Copy)]
@@ -80,77 +77,77 @@ struct ThemePalette {
 }
 
 const LIGHT_PALETTE: ThemePalette = ThemePalette {
-    background: 0xffffff,
-    foreground: 0x18181b,
+    background: 0xf5f5f4,
+    foreground: 0x0c0c0d,
     card: 0xffffff,
-    card_foreground: 0x18181b,
+    card_foreground: 0x0c0c0d,
     popover: 0xffffff,
-    popover_foreground: 0x18181b,
-    primary: 0x18181b,
-    primary_hover: 0x333338,
-    primary_active: 0x000000,
-    primary_foreground: 0xfafafa,
-    secondary: 0xededf0,
-    secondary_hover: 0xe1e1e6,
-    secondary_active: 0xd6d6dc,
-    secondary_foreground: 0x18181b,
-    muted: 0xf4f4f5,
-    muted_foreground: 0x71717a,
-    accent: 0xf4f4f5,
-    accent_foreground: 0x18181b,
-    destructive: 0xe5484d,
+    popover_foreground: 0x0c0c0d,
+    primary: 0x0c0c0d,
+    primary_hover: 0x27272a,
+    primary_active: 0x18181b,
+    primary_foreground: 0xffffff,
+    secondary: 0xe4e4e7,
+    secondary_hover: 0xd4d4d8,
+    secondary_active: 0xa1a1aa,
+    secondary_foreground: 0x0c0c0d,
+    muted: 0xecedee,
+    muted_foreground: 0x78787e,
+    accent: 0xe8e8ea,
+    accent_foreground: 0x0c0c0d,
+    destructive: 0xdc2626,
     destructive_foreground: 0xffffff,
-    border: 0xe4e4e7,
-    input: 0xe4e4e7,
-    chart_1: 0x18181b,
-    chart_2: 0xededf0,
-    chart_3: 0xf4f4f5,
-    chart_4: 0xd4d4d8,
-    chart_5: 0x18181b,
-    sidebar: 0xfafafa,
-    sidebar_foreground: 0x18181b,
-    sidebar_primary: 0x18181b,
-    sidebar_primary_foreground: 0xfafafa,
-    sidebar_accent: 0xf0f0f2,
-    sidebar_accent_foreground: 0x18181b,
-    sidebar_border: 0xededf0,
+    border: 0xd4d4d8,
+    input: 0xd4d4d8,
+    chart_1: 0x0c0c0d,
+    chart_2: 0xe4e4e7,
+    chart_3: 0xecedee,
+    chart_4: 0xc8c8ce,
+    chart_5: 0x0c0c0d,
+    sidebar: 0xf0efed,
+    sidebar_foreground: 0x78787e,
+    sidebar_primary: 0x0c0c0d,
+    sidebar_primary_foreground: 0xffffff,
+    sidebar_accent: 0xe4e3e0,
+    sidebar_accent_foreground: 0x0c0c0d,
+    sidebar_border: 0xdcdbd7,
 };
 
 const DARK_PALETTE: ThemePalette = ThemePalette {
-    background: 0x000000,
-    foreground: 0xfafafa,
-    card: 0x141416,
-    card_foreground: 0xfafafa,
+    background: 0x080808,
+    foreground: 0xf1f1f3,
+    card: 0x101012,
+    card_foreground: 0xf1f1f3,
     popover: 0x141416,
-    popover_foreground: 0xfafafa,
-    primary: 0xfafafa,
-    primary_hover: 0xe2e2e6,
-    primary_active: 0xcacace,
-    primary_foreground: 0x0a0a0a,
-    secondary: 0x1f1f22,
-    secondary_hover: 0x2b2b2f,
-    secondary_active: 0x343438,
-    secondary_foreground: 0xfafafa,
-    muted: 0x161618,
-    muted_foreground: 0xa1a1aa,
-    accent: 0x1f1f22,
-    accent_foreground: 0xfafafa,
+    popover_foreground: 0xf1f1f3,
+    primary: 0xf1f1f3,
+    primary_hover: 0xc8c8ce,
+    primary_active: 0xa8a8b0,
+    primary_foreground: 0x080808,
+    secondary: 0x1a1a1e,
+    secondary_hover: 0x26262a,
+    secondary_active: 0x2f2f33,
+    secondary_foreground: 0xf1f1f3,
+    muted: 0x121214,
+    muted_foreground: 0x9999a0,
+    accent: 0x1a1a1e,
+    accent_foreground: 0xf1f1f3,
     destructive: 0xe5484d,
     destructive_foreground: 0xffffff,
-    border: 0x232326,
-    input: 0x232326,
-    chart_1: 0xfafafa,
-    chart_2: 0x1f1f22,
-    chart_3: 0x1f1f22,
-    chart_4: 0x3f3f46,
-    chart_5: 0xfafafa,
-    sidebar: 0x0b0b0c,
-    sidebar_foreground: 0xfafafa,
-    sidebar_primary: 0xfafafa,
-    sidebar_primary_foreground: 0x0a0a0a,
-    sidebar_accent: 0x1f1f22,
-    sidebar_accent_foreground: 0xfafafa,
-    sidebar_border: 0x1c1c1f,
+    border: 0x1e1e22,
+    input: 0x1e1e22,
+    chart_1: 0xf1f1f3,
+    chart_2: 0x1a1a1e,
+    chart_3: 0x1a1a1e,
+    chart_4: 0x2f2f33,
+    chart_5: 0xf1f1f3,
+    sidebar: 0x0a0a0b,
+    sidebar_foreground: 0x787880,
+    sidebar_primary: 0xf1f1f3,
+    sidebar_primary_foreground: 0x080808,
+    sidebar_accent: 0x18181c,
+    sidebar_accent_foreground: 0xf1f1f3,
+    sidebar_border: 0x16161a,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -282,8 +279,8 @@ impl WrecApp {
             .justify_between()
             .h(px(TITLE_BAR_HEIGHT))
             .flex_shrink_0()
-            .pl(px(14.))
-            .pr_2()
+            .pl(px(16.))
+            .pr_2p5()
             .border_b_1()
             .border_color(cx.theme().border)
             .child(
@@ -303,48 +300,44 @@ impl WrecApp {
 
     pub(crate) fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self.active_tab;
-        let items = [
-            Some(sidebar_nav_item(
-                "General",
-                PhosphorIcon::Gauge,
-                AppTab::General,
-                AppTab::General.is_active(active),
+
+        let general = Self::sidebar_item(
+            AppTab::General,
+            PhosphorIcon::Gauge,
+            "General",
+            AppTab::General.is_active(active),
+            cx,
+        );
+        let cli = Self::sidebar_item(
+            AppTab::Cli,
+            PhosphorIcon::Terminal,
+            "CLI",
+            AppTab::Cli.is_active(active),
+            cx,
+        );
+        let nerd = self.show_nerd_logs.then(|| {
+            Self::sidebar_item(
+                AppTab::Nerd,
+                PhosphorIcon::Pulse,
+                "Nerd",
+                AppTab::Nerd.is_active(active),
                 cx,
-            )),
-            Some(sidebar_nav_item(
-                "CLI",
-                PhosphorIcon::Terminal,
-                AppTab::Cli,
-                AppTab::Cli.is_active(active),
-                cx,
-            )),
-            self.show_nerd_logs.then(|| {
-                sidebar_nav_item(
-                    "Nerd",
-                    PhosphorIcon::Pulse,
-                    AppTab::Nerd,
-                    AppTab::Nerd.is_active(active),
-                    cx,
-                )
-            }),
-            Some(sidebar_nav_item(
-                "Settings",
-                PhosphorIcon::Gear,
-                AppTab::Settings,
-                AppTab::Settings.is_active(active),
-                cx,
-            )),
-            Some(sidebar_nav_item(
-                "About",
-                PhosphorIcon::Info,
-                AppTab::About,
-                AppTab::About.is_active(active),
-                cx,
-            )),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+            )
+        });
+        let settings = Self::sidebar_item(
+            AppTab::Settings,
+            PhosphorIcon::Gear,
+            "Settings",
+            AppTab::Settings.is_active(active),
+            cx,
+        );
+        let about = Self::sidebar_item(
+            AppTab::About,
+            PhosphorIcon::Info,
+            "About",
+            AppTab::About.is_active(active),
+            cx,
+        );
 
         div()
             .id("wrec-sidebar")
@@ -354,12 +347,110 @@ impl WrecApp {
             .h_full()
             .flex_shrink_0()
             .overflow_hidden()
-            .pt_3()
             .bg(cx.theme().sidebar)
-            .text_color(cx.theme().sidebar_foreground)
             .border_r_1()
             .border_color(cx.theme().sidebar_border)
-            .child(WrecSidebarNav { items }.render("wrec-sidebar-nav", cx))
+            .child(
+                div()
+                    .id("wrec-sidebar-nav")
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .h_full()
+                    .pt_4()
+                    .child(
+                        div().flex().flex_col().px_2().pb_4().child(
+                            div()
+                                .text_xs()
+                                .text_color(switch_on_color(cx))
+                                .font_weight(FontWeight::BOLD)
+                                .child("wrec"),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .gap_0p5()
+                            .child(general)
+                            .child(cli)
+                            .when_some(nerd, |this, item| this.child(item))
+                            .child(
+                                div().flex_1().min_h(px(0.)),
+                            )
+                            .child(settings)
+                            .child(about),
+                    ),
+            )
+    }
+
+    fn sidebar_item(
+        tab: AppTab,
+        icon: PhosphorIcon,
+        label: &'static str,
+        active: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let hover_bg = cx.theme().sidebar_accent;
+        let accent = crate::ui::switch_on_color(cx);
+
+        div()
+            .id(format!("sidebar-nav-{}", tab.id()))
+            .flex()
+            .items_center()
+            .w_full()
+            .pl_1()
+            .pr_2()
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(3.0))
+                    .h(px(16.0))
+                    .rounded_full()
+                    .when(active, |this| this.bg(accent)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2p5()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .h(px(CONTROL_HEIGHT))
+                    .px_2p5()
+                    .rounded_lg()
+                    .text_base()
+                    .font_weight(if active {
+                        FontWeight::BOLD
+                    } else {
+                        FontWeight::SEMIBOLD
+                    })
+                    .cursor_pointer()
+                    .when(active, |this| {
+                        this.bg(hover_bg)
+                            .text_color(cx.theme().sidebar_accent_foreground)
+                    })
+                    .when(!active, |this| {
+                        this.text_color(cx.theme().sidebar_foreground)
+                            .hover(|this| {
+                                this.bg(hover_bg)
+                                    .text_color(cx.theme().sidebar_accent_foreground)
+                            })
+                    })
+                    .child(
+                        UiIcon::new(icon)
+                            .size(px(16.))
+                            .flex_shrink_0(),
+                    )
+                    .child(div().flex_1().min_w(px(0.)).truncate().child(label)),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if this.active_tab != tab {
+                    this.active_tab = tab;
+                    cx.notify();
+                }
+            }))
     }
 
     pub(crate) fn render_general_tab(
@@ -378,93 +469,22 @@ impl WrecApp {
         muted_foreground: Hsla,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let source_row = div()
-            .flex()
-            .items_center()
-            .gap_3()
-            .min_w(px(0.))
-            .child(field_label("Source", muted_foreground))
-            .child(
-                div().flex_1().min_w(px(0.)).h(px(CONTROL_HEIGHT)).child(
-                    Select::new(&self.source_select)
-                        .large()
-                        .h(px(CONTROL_HEIGHT))
-                        .placeholder("Source")
-                        .menu_max_h(rems(7.))
-                        .disabled(controls_disabled),
-                ),
-            );
-        let target_row = labeled_select_row(
-            "Target",
-            muted_foreground,
-            Select::new(&self.target_select)
-                .large()
-                .h(px(CONTROL_HEIGHT))
-                .placeholder("Target")
-                .search_placeholder("Search targets")
-                .menu_max_h(rems(14.))
-                .disabled(controls_disabled),
-        );
-        let format_row = labeled_select_row(
-            "Format",
-            muted_foreground,
-            Select::new(&self.codec_select)
-                .large()
-                .h(px(CONTROL_HEIGHT))
-                .placeholder("Format")
-                .disabled(controls_disabled),
-        );
-        let quality_row = labeled_select_row(
-            "Preset",
-            muted_foreground,
-            Select::new(&self.quality_select)
-                .large()
-                .h(px(CONTROL_HEIGHT))
-                .placeholder("Preset")
-                .disabled(controls_disabled),
-        );
-        let resolution_row = labeled_select_row(
-            "Resolution",
-            muted_foreground,
-            Select::new(&self.resolution_select)
-                .large()
-                .h(px(CONTROL_HEIGHT))
-                .placeholder("Resolution")
-                .disabled(controls_disabled),
-        );
-        let frame_rate_row = labeled_select_row(
-            "Frame Rate",
-            muted_foreground,
-            Select::new(&self.fps_select)
-                .large()
-                .h(px(CONTROL_HEIGHT))
-                .placeholder("Frame Rate")
-                .disabled(controls_disabled),
-        );
-        let cursor_row = label_switch_row(
-            "Cursor",
-            muted_foreground,
-            Switch::new("cursor-switch")
-                .checked(self.settings.include_cursor)
-                .color(switch_on_color(cx))
-                .tooltip("Capture cursor")
-                .disabled(controls_disabled)
-                .on_click(cx.listener(|this, checked, _, cx| {
-                    this.set_include_cursor(*checked, cx);
-                })),
-        );
-        let audio_row = label_switch_row(
-            "System Audio",
-            muted_foreground,
-            Switch::new("system-audio-switch")
-                .checked(self.settings.include_system_audio)
-                .color(switch_on_color(cx))
-                .tooltip("Capture system audio")
-                .disabled(controls_disabled)
-                .on_click(cx.listener(|this, checked, _, cx| {
-                    this.set_include_system_audio(*checked, cx);
-                })),
-        );
+        let control = |label: &'static str| {
+            div()
+                .text_xs()
+                .text_color(muted_foreground)
+                .font_weight(FontWeight::SEMIBOLD)
+                .mb_1()
+                .child(label)
+        };
+
+        let (status_label, status_color) = if self.recorder_state.is_recording() {
+            ("Recording", cx.theme().danger)
+        } else if self.recorder_state.is_paused() {
+            ("Paused", cx.theme().foreground.opacity(0.5))
+        } else {
+            ("Ready", Hsla::from(rgb(0x22c55e)))
+        };
 
         div()
             .flex()
@@ -476,21 +496,214 @@ impl WrecApp {
                 div()
                     .flex()
                     .flex_col()
-                    .gap_2()
-                    .child(source_row)
-                    .child(target_row),
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(cx.theme().foreground)
+                                    .child("Capture"),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1p5()
+                                    .child(
+                                        div()
+                                            .w(px(6.0))
+                                            .h(px(6.0))
+                                            .rounded_full()
+                                            .bg(status_color),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(muted_foreground)
+                                            .child(status_label),
+                                    ),
+                            ),
+                    )
+                    .child(div().h(px(1.0)).w_full().bg(cx.theme().border)),
             )
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(format_row)
-                    .child(resolution_row)
-                    .child(quality_row)
-                    .child(frame_rate_row)
-                    .child(cursor_row)
-                    .child(audio_row),
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1p5()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .child(control("Source"))
+                            .child(
+                                div().h(px(CONTROL_HEIGHT)).child(
+                                    Select::new(&self.source_select)
+                                        .large()
+                                        .h(px(CONTROL_HEIGHT))
+                                        .placeholder("Source")
+                                        .menu_max_h(rems(7.))
+                                        .disabled(controls_disabled),
+                                ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1p5()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .child(control("Target"))
+                            .child(
+                                div().h(px(CONTROL_HEIGHT)).child(
+                                    Select::new(&self.target_select)
+                                        .large()
+                                        .h(px(CONTROL_HEIGHT))
+                                        .placeholder("Target")
+                                        .search_placeholder("Search targets")
+                                        .menu_max_h(rems(14.))
+                                        .disabled(controls_disabled),
+                                ),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1p5()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .child(control("Format"))
+                            .child(
+                                div().h(px(CONTROL_HEIGHT)).child(
+                                    Select::new(&self.codec_select)
+                                        .large()
+                                        .h(px(CONTROL_HEIGHT))
+                                        .placeholder("Format")
+                                        .disabled(controls_disabled),
+                                ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1p5()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .child(control("Preset"))
+                            .child(
+                                div().h(px(CONTROL_HEIGHT)).child(
+                                    Select::new(&self.quality_select)
+                                        .large()
+                                        .h(px(CONTROL_HEIGHT))
+                                        .placeholder("Preset")
+                                        .disabled(controls_disabled),
+                                ),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1p5()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .child(control("Resolution"))
+                            .child(
+                                div().h(px(CONTROL_HEIGHT)).child(
+                                    Select::new(&self.resolution_select)
+                                        .large()
+                                        .h(px(CONTROL_HEIGHT))
+                                        .placeholder("Resolution")
+                                        .disabled(controls_disabled),
+                                ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1p5()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .child(control("FPS"))
+                            .child(
+                                div().h(px(CONTROL_HEIGHT)).child(
+                                    Select::new(&self.fps_select)
+                                        .large()
+                                        .h(px(CONTROL_HEIGHT))
+                                        .placeholder("Frame Rate")
+                                        .disabled(controls_disabled),
+                                ),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_6()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Label::new("Cursor")
+                                    .text_sm()
+                                    .text_color(muted_foreground),
+                            )
+                            .child(
+                                Switch::new("cursor-switch")
+                                    .checked(self.settings.include_cursor)
+                                    .color(switch_on_color(cx))
+                                    .tooltip("Capture cursor")
+                                    .disabled(controls_disabled)
+                                    .on_click(cx.listener(|this, checked, _, cx| {
+                                        this.set_include_cursor(*checked, cx);
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Label::new("System Audio")
+                                    .text_sm()
+                                    .text_color(muted_foreground),
+                            )
+                            .child(
+                                Switch::new("system-audio-switch")
+                                    .checked(self.settings.include_system_audio)
+                                    .color(switch_on_color(cx))
+                                    .tooltip("Capture system audio")
+                                    .disabled(controls_disabled)
+                                    .on_click(cx.listener(|this, checked, _, cx| {
+                                        this.set_include_system_audio(*checked, cx);
+                                    })),
+                            ),
+                    ),
             )
             .child(if show_pause_button {
                 div()
@@ -522,6 +735,7 @@ impl WrecApp {
                     cx,
                 )
                 .w_full()
+                .rounded_lg()
                 .into_any_element()
             })
     }
@@ -535,8 +749,10 @@ impl WrecApp {
         div()
             .flex()
             .flex_col()
-            .gap_2()
-            .child(
+            .flex_1()
+            .min_h(px(0.))
+            .gap_3()
+            .child(card_section(vec![
                 div()
                     .flex()
                     .items_center()
@@ -549,46 +765,44 @@ impl WrecApp {
                         self.permission_busy,
                         cx,
                     )),
-            )
-            .child(switch_row(
-                "Hide wrec",
-                if self.settings.hide_wrec { "On" } else { "Off" },
-                muted_foreground,
-                Switch::new("hide-window-switch")
-                    .checked(self.settings.hide_wrec)
-                    .color(switch_on_color(cx))
-                    .tooltip("Hide wrec from recording")
-                    .disabled(controls_disabled)
-                    .on_click(cx.listener(|this, checked, _, cx| {
-                        this.set_hide_wrec(*checked, cx);
-                    })),
-            ))
-            .child(switch_row(
-                "Logs",
-                if self.show_nerd_logs { "On" } else { "Off" },
-                muted_foreground,
-                Switch::new("logs-switch")
-                    .checked(self.show_nerd_logs)
-                    .color(switch_on_color(cx))
-                    .tooltip("Show Nerd tab")
-                    .on_click(cx.listener(|this, checked, _, cx| {
-                        this.set_show_nerd_logs(*checked, cx);
-                    })),
-            ))
-            .child(
+                switch_row(
+                    "Hide wrec",
+                    if self.settings.hide_wrec { "On" } else { "Off" },
+                    muted_foreground,
+                    Switch::new("hide-window-switch")
+                        .checked(self.settings.hide_wrec)
+                        .color(switch_on_color(cx))
+                        .tooltip("Hide wrec from recording")
+                        .disabled(controls_disabled)
+                        .on_click(cx.listener(|this, checked, _, cx| {
+                            this.set_hide_wrec(*checked, cx);
+                        })),
+                ),
+                switch_row(
+                    "Logs",
+                    if self.show_nerd_logs { "On" } else { "Off" },
+                    muted_foreground,
+                    Switch::new("logs-switch")
+                        .checked(self.show_nerd_logs)
+                        .color(switch_on_color(cx))
+                        .tooltip("Show Nerd tab")
+                        .on_click(cx.listener(|this, checked, _, cx| {
+                            this.set_show_nerd_logs(*checked, cx);
+                        })),
+                ),
+            ], cx))
+            .child(card_section(vec![
+                section_label("Output", muted_foreground),
                 div().w_full().h(px(CONTROL_HEIGHT)).child(
                     Input::new(&self.output_input)
                         .large()
                         .h(px(CONTROL_HEIGHT))
                         .disabled(controls_disabled),
                 ),
-            )
-            .child(
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .mt_3()
                     .child(
                         UiButton::new("choose-output-dir")
                             .secondary()
@@ -622,7 +836,7 @@ impl WrecApp {
                                 this.open_last_recording_dir(window, cx);
                             })),
                     ),
-            )
+            ], cx))
     }
 
     pub(crate) fn render_cli_tab(
@@ -639,8 +853,11 @@ impl WrecApp {
         div()
             .flex()
             .flex_col()
-            .gap_2()
-            .child(
+            .flex_1()
+            .min_h(px(0.))
+            .gap_3()
+            .child(card_section(vec![
+                section_label("Status", muted_foreground),
                 div()
                     .flex()
                     .items_center()
@@ -674,8 +891,9 @@ impl WrecApp {
                                 this.refresh_cli_install_status(cx);
                             })),
                     ),
-            )
-            .child(
+            ], cx))
+            .child(card_section(vec![
+                section_label("Install", muted_foreground),
                 div()
                     .flex()
                     .items_center()
@@ -697,7 +915,7 @@ impl WrecApp {
                                 this.copy_cli_install_command(window, cx);
                             })),
                     ),
-            )
+            ], cx))
     }
 
     pub(crate) fn render_nerds_tab(
@@ -711,10 +929,10 @@ impl WrecApp {
         div()
             .flex()
             .flex_col()
-            .gap_2()
             .flex_1()
             .min_h(px(0.))
-            .child(
+            .gap_3()
+            .child(card_section(vec![
                 div()
                     .flex()
                     .items_center()
@@ -737,14 +955,14 @@ impl WrecApp {
                                 this.open_recordings_data_dir(window, cx);
                             })),
                     ),
-            )
+            ], cx))
             .child(
                 div()
+                    .flex_1()
                     .flex()
                     .flex_col()
                     .items_center()
                     .justify_center()
-                    .flex_1()
                     .min_h(px(0.))
                     .overflow_hidden()
                     .px_3()
@@ -753,10 +971,11 @@ impl WrecApp {
                             .max_w_full()
                             .truncate()
                             .text_center()
-                            .text_size(px(24.))
-                            .line_height(relative(1.))
+                            .text_size(px(28.))
+                            .line_height(relative(1.2))
                             .font_weight(FontWeight::SEMIBOLD)
                             .font_family(cx.theme().mono_font_family.clone())
+                            .text_color(cx.theme().foreground)
                             .child(metrics_label),
                     ),
             )
@@ -770,38 +989,43 @@ impl WrecApp {
         div()
             .flex()
             .flex_col()
+            .flex_1()
+            .min_h(px(0.))
             .gap_3()
-            .child(plain_info_row(
-                "Version",
-                env!("CARGO_PKG_VERSION"),
-                muted_foreground,
-            ))
-            .child(
-                UiButton::new("open-github")
-                    .secondary()
-                    .w_full()
-                    .h(px(CONTROL_HEIGHT))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .icon(UiIcon::new(PhosphorIcon::Github).text_color(muted_foreground))
-                    .label("GitHub")
-                    .tooltip("Open GitHub repository")
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        match crate::platform::open_url(crate::app::GITHUB_URL) {
-                            Ok(()) => this.push_log("opened GitHub repository"),
-                            Err(err) => {
-                                this.push_log(format!("open GitHub failed: {err}"));
-                                push_app_notification(
-                                    window,
-                                    Notification::new().message(format!(
-                                        "Could not open GitHub repository: {err}"
-                                    )),
-                                    cx,
-                                );
+            .child(card_section(vec![
+                section_label("About", muted_foreground),
+                plain_info_row(
+                    "Version",
+                    env!("CARGO_PKG_VERSION"),
+                    muted_foreground,
+                ),
+                div().child(
+                    UiButton::new("open-github")
+                        .secondary()
+                        .w_full()
+                        .h(px(CONTROL_HEIGHT))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .icon(UiIcon::new(PhosphorIcon::Github).text_color(muted_foreground))
+                        .label("GitHub")
+                        .tooltip("Open GitHub repository")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            match crate::platform::open_url(crate::app::GITHUB_URL) {
+                                Ok(()) => this.push_log("opened GitHub repository"),
+                                Err(err) => {
+                                    this.push_log(format!("open GitHub failed: {err}"));
+                                    push_app_notification(
+                                        window,
+                                        Notification::new().message(format!(
+                                            "Could not open GitHub repository: {err}"
+                                        )),
+                                        cx,
+                                    );
+                                }
                             }
-                        }
-                        cx.notify();
-                    })),
-            )
+                            cx.notify();
+                        })),
+                ),
+            ], cx))
     }
 }
 
@@ -840,10 +1064,7 @@ impl Render for WrecApp {
         let controls_disabled =
             self.recorder_state.is_busy() || self.permission_busy || active_session;
         let metrics_label = Some(if active_session || self.recorder_state.is_recording() {
-            self.metrics
-                .as_ref()
-                .map(metrics_label)
-                .unwrap_or_else(zero_metrics_label)
+            self.cached_metrics_label.clone()
         } else {
             zero_metrics_label()
         });
@@ -879,10 +1100,10 @@ impl Render for WrecApp {
                             .flex_col()
                             .flex_1()
                             .min_w(px(0.))
-                            .pt_4()
+                            .pt_5()
                             .pb_4()
-                            .pl_4()
-                            .pr_3()
+                            .pl_5()
+                            .pr_4()
                             .child(div().id("tab-content").flex().flex_col().flex_1().map(
                                 |this| match self.active_tab {
                                     AppTab::General => this.child(self.render_general_tab(
@@ -927,134 +1148,12 @@ impl Render for WrecApp {
     }
 }
 
-type SidebarClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
-
-/// Toned-down "on" color for switches — pure-white (primary) reads too loud on
-/// the pitch-black background, so use a soft gray in dark mode.
 fn switch_on_color(cx: &Context<WrecApp>) -> Hsla {
     if cx.theme().mode.is_dark() {
-        Hsla::from(rgb(0xb0b0b8))
+        Hsla::from(rgb(0x06b6d4))
     } else {
         cx.theme().primary
     }
-}
-
-#[derive(Clone)]
-struct WrecSidebarNav {
-    items: Vec<WrecSidebarNavItem>,
-}
-
-#[derive(Clone)]
-struct WrecSidebarNavItem {
-    label: &'static str,
-    icon: PhosphorIcon,
-    tab: AppTab,
-    active: bool,
-    on_click: SidebarClickHandler,
-}
-
-impl WrecSidebarNav {
-    fn render(self, id: impl Into<ElementId>, cx: &mut Context<WrecApp>) -> impl IntoElement {
-        div()
-            .id(id.into())
-            .flex()
-            .flex_col()
-            .w_full()
-            .h_full()
-            .text_color(cx.theme().sidebar_foreground)
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .children(self.items.into_iter().map(|item| sidebar_nav_row(item, cx))),
-            )
-    }
-}
-
-fn sidebar_nav_item(
-    label: &'static str,
-    icon: PhosphorIcon,
-    tab: AppTab,
-    active: bool,
-    cx: &mut Context<WrecApp>,
-) -> WrecSidebarNavItem {
-    let on_click = Rc::new(cx.listener(move |this, _, _, cx| {
-        if this.active_tab != tab {
-            this.active_tab = tab;
-            cx.notify();
-        }
-    }));
-
-    WrecSidebarNavItem {
-        label,
-        icon,
-        tab,
-        active,
-        on_click,
-    }
-}
-
-fn sidebar_nav_row(item: WrecSidebarNavItem, cx: &mut Context<WrecApp>) -> impl IntoElement {
-    // Clean filled pill, inset from the sidebar edges, for the selected/hovered item.
-    let active_bg = cx.theme().accent;
-    let hover_bg = cx.theme().muted;
-    let color = if item.active {
-        cx.theme().sidebar_accent_foreground
-    } else {
-        cx.theme().sidebar_foreground
-    };
-    let icon_color = if item.active {
-        cx.theme().sidebar_accent_foreground
-    } else {
-        cx.theme().muted_foreground
-    };
-    let on_click = item.on_click.clone();
-
-    div()
-        .id(format!("sidebar-nav-{}", item.tab.id()))
-        .flex()
-        .items_center()
-        .w_full()
-        .px_2()
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2p5()
-                .w_full()
-                .h(px(CONTROL_HEIGHT))
-                .px_2p5()
-                .rounded_lg()
-                .text_base()
-                .font_weight(if item.active {
-                    FontWeight::BOLD
-                } else {
-                    FontWeight::SEMIBOLD
-                })
-                .text_color(color)
-                .cursor_pointer()
-                .when(item.active, |this| {
-                    this.bg(active_bg)
-                        .text_color(cx.theme().sidebar_accent_foreground)
-                })
-                .when(!item.active, |this| {
-                    this.hover(|this| {
-                        this.bg(hover_bg)
-                            .text_color(cx.theme().sidebar_accent_foreground)
-                    })
-                })
-                .child(
-                    UiIcon::new(item.icon)
-                        .size(px(16.))
-                        .text_color(icon_color)
-                        .flex_shrink_0(),
-                )
-                .child(div().flex_1().min_w(px(0.)).truncate().child(item.label)),
-        )
-        .on_click(move |event, window, cx| {
-            on_click(event, window, cx);
-        })
 }
 
 fn permission_state_button(
@@ -1105,7 +1204,8 @@ fn record_button(
     let button = UiButton::new("record-button")
         .h(px(RECORD_BUTTON_HEIGHT))
         .font_weight(FontWeight::SEMIBOLD)
-        .icon(UiIcon::new(icon).text_color(if is_idle {
+        .text_base()
+        .icon(UiIcon::new(icon).size(px(18.0)).text_color(if is_idle {
             theme.button_primary_foreground
         } else {
             theme.danger_foreground
@@ -1136,7 +1236,8 @@ fn pause_button(
         .secondary()
         .h(px(RECORD_BUTTON_HEIGHT))
         .font_weight(FontWeight::SEMIBOLD)
-        .icon(UiIcon::new(icon).text_color(cx.theme().muted_foreground))
+        .text_base()
+        .icon(UiIcon::new(icon).size(px(18.0)).text_color(cx.theme().secondary_foreground))
         .label(label)
         .tooltip(tooltip)
         .disabled(disabled)
@@ -1146,36 +1247,11 @@ fn pause_button(
         }))
 }
 
-fn field_label(label: &'static str, color: Hsla) -> Div {
-    div().w(px(FIELD_LABEL_WIDTH)).flex_none().child(
-        Label::new(label)
-            .text_base()
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(color),
-    )
-}
-
 fn row_label(label: &'static str) -> Div {
     div()
         .text_base()
         .font_weight(FontWeight::SEMIBOLD)
         .child(label)
-}
-
-fn labeled_select_row(label: &'static str, color: Hsla, select: impl IntoElement) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap_3()
-        .min_w(px(0.))
-        .child(field_label(label, color))
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .h(px(CONTROL_HEIGHT))
-                .child(select),
-        )
 }
 
 fn theme_toggle(is_dark: bool, cx: &mut Context<WrecApp>) -> impl IntoElement {
@@ -1224,16 +1300,26 @@ fn switch_row(label: &'static str, value: &'static str, value_color: Hsla, switc
         .child(switch)
 }
 
-fn label_switch_row(label: &'static str, color: Hsla, switch: Switch) -> Div {
+fn card_section(children: Vec<Div>, cx: &Context<WrecApp>) -> Div {
+    let t = cx.theme();
     div()
         .flex()
-        .items_center()
-        .justify_between()
-        .w_full()
-        .h(px(CONTROL_HEIGHT))
-        .gap_3()
-        .child(field_label(label, color))
-        .child(switch)
+        .flex_col()
+        .gap_2()
+        .p_2p5()
+        .rounded_lg()
+        .bg(t.group_box)
+        .border_1()
+        .border_color(t.border)
+        .children(children)
+}
+
+fn section_label(label: &'static str, muted_foreground: Hsla) -> Div {
+    div()
+        .text_xs()
+        .text_color(muted_foreground)
+        .font_weight(FontWeight::SEMIBOLD)
+        .child(label)
 }
 
 fn plain_info_row(label: &'static str, value: impl Into<SharedString>, value_color: Hsla) -> Div {
@@ -1412,7 +1498,7 @@ pub(crate) fn target_key(target: &CaptureTarget) -> String {
     format!("{kind}:{}", target.id)
 }
 
-fn metrics_label(metrics: &RecorderMetrics) -> String {
+pub(crate) fn metrics_label(metrics: &RecorderMetrics) -> String {
     format!(
         "{}s  {:.1} MB  {:.1} Mbps",
         metrics.elapsed_secs,
@@ -1421,7 +1507,7 @@ fn metrics_label(metrics: &RecorderMetrics) -> String {
     )
 }
 
-fn zero_metrics_label() -> String {
+pub(crate) fn zero_metrics_label() -> String {
     "0s  0.0 MB  0.0 Mbps".to_string()
 }
 
