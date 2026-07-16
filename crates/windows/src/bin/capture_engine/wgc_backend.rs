@@ -350,8 +350,24 @@ where
         ColorFormat::Bgra8,
         flags,
     );
-    let control = Capture::start_free_threaded(settings)
-        .map_err(|err| anyhow!("failed to start Windows Graphics Capture: {err}"))?;
+    let control = Capture::start_free_threaded(settings).map_err(|err| {
+        let msg = format!("{err:#}");
+        if msg.contains("0x80070490") || msg.contains("Element not found") {
+            match args.target_kind.as_str() {
+                "window" => {
+                    anyhow!("The selected window was closed or is no longer available. Re-select it and try again.")
+                }
+                "display" => {
+                    anyhow!("The selected display was disconnected or is no longer available. Re-select it and try again.")
+                }
+                _ => {
+                    anyhow!("The selected capture target is no longer available. Re-select it and try again.")
+                }
+            }
+        } else {
+            anyhow!("failed to start Windows Graphics Capture: {err}")
+        }
+    })?;
     let callback = control.callback();
     let commands = spawn_command_reader();
 
