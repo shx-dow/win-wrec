@@ -283,6 +283,7 @@ impl<R: RecordingRuntime> Coordinator<R> {
         let mut state = lock_state(&state)?;
         let job = active_job_mut(&mut state, id)?;
         job.status = JobStatus::Paused;
+        job.start_pause();
         job.push_event(EventLevel::Info, "pause requested");
         Ok(json!({ "job": job.snapshot(None) }))
     }
@@ -313,6 +314,7 @@ impl<R: RecordingRuntime> Coordinator<R> {
         let mut state = lock_state(&state)?;
         let job = active_job_mut(&mut state, id)?;
         job.status = JobStatus::Recording;
+        job.end_pause();
         job.push_event(EventLevel::Info, "resume requested");
         Ok(json!({ "job": job.snapshot(None) }))
     }

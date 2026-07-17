@@ -21,6 +21,8 @@ pub(crate) struct JobRecord<E> {
     pub(crate) updated_at_ms: u64,
     pub(crate) started_at_ms: Option<u64>,
     pub(crate) finished_at_ms: Option<u64>,
+    pub(crate) paused_duration_ms: u64,
+    pub(crate) pause_started_at_ms: Option<u64>,
 }
 
 impl<E> JobRecord<E> {
@@ -48,6 +50,8 @@ impl<E> JobRecord<E> {
             updated_at_ms: now,
             started_at_ms: None,
             finished_at_ms: None,
+            paused_duration_ms: 0,
+            pause_started_at_ms: None,
         }
     }
 
@@ -86,6 +90,7 @@ impl<E> JobRecord<E> {
 
     pub(crate) fn mark_finishing(&mut self) {
         if !self.is_terminal() {
+            self.finalize_pause();
             self.status = JobStatus::Finishing;
             self.push_event(EventLevel::Info, "stop requested");
         }
@@ -102,6 +107,7 @@ impl<E> JobRecord<E> {
 
     pub(crate) fn mark_failed(&mut self, message: impl Into<String>) {
         if !self.is_terminal() {
+            self.finalize_pause();
             self.status = JobStatus::Failed;
             self.finished_at_ms = Some(now_ms());
             self.control = None;
@@ -111,6 +117,7 @@ impl<E> JobRecord<E> {
 
     pub(crate) fn mark_completed(&mut self, status: impl Into<String>) {
         if !self.is_terminal() {
+            self.finalize_pause();
             self.status = JobStatus::Completed;
             self.finished_at_ms = Some(now_ms());
             self.control = None;
@@ -137,19 +144,49 @@ impl<E> JobRecord<E> {
         self.updated_at_ms = now_ms();
     }
 
+    pub(crate) fn start_pause(&mut self) {
+        self.pause_started_at_ms = Some(now_ms());
+    }
+
+    pub(crate) fn end_pause(&mut self) {
+        if let Some(started) = self.pause_started_at_ms.take() {
+            self.paused_duration_ms = self.paused_duration_ms.saturating_add(now_ms().saturating_sub(started));
+        }
+    }
+
     pub(crate) fn push_metrics(&mut self, metrics: RecorderMetrics) {
+        let paused_secs = (self.paused_duration_ms / 1000) as u64;
+        let adjusted = if paused_secs > 0 {
+            let adjusted_elapsed = metrics.elapsed_secs.saturating_sub(paused_secs);
+            let adjusted_bitrate = if adjusted_elapsed > 0 {
+                metrics.output_bytes as f32 * 8. / adjusted_elapsed as f32 / 1_000_000.
+            } else {
+                0.0
+            };
+            RecorderMetrics {
+                elapsed_secs: adjusted_elapsed,
+                estimated_bitrate_mbps: adjusted_bitrate,
+                ..metrics
+            }
+        } else {
+            metrics
+        };
         let event = JobEvent {
             timestamp_ms: now_ms(),
             level: EventLevel::Info,
             message: format!(
                 "{}s  {} bytes  {:.2} Mbps",
-                metrics.elapsed_secs, metrics.output_bytes, metrics.estimated_bitrate_mbps
+                adjusted.elapsed_secs, adjusted.output_bytes, adjusted.estimated_bitrate_mbps
             ),
-            metrics: Some(metrics),
+            metrics: Some(adjusted),
         };
         append_job_event(self.id, &event);
         self.events.push(event);
         self.updated_at_ms = now_ms();
+    }
+
+    pub(crate) fn finalize_pause(&mut self) {
+        self.end_pause();
     }
 }
 

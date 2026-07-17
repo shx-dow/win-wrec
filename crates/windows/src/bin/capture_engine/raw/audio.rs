@@ -318,9 +318,26 @@ fn run_loopback(
         };
 
         let mut next_hns: i64 = 0;
+        let mut pause_start: Option<Instant> = None;
+        let mut total_paused_ns: i64 = 0;
+
+        let adjusted_wall = |start: Instant, paused_ns: i64| -> i64 {
+            wall_hns(start) - paused_ns
+        };
 
         while running.load(Ordering::Relaxed) {
             let mut got_packet = false;
+            let was_paused = paused.load(Ordering::Relaxed);
+
+            if was_paused {
+                if pause_start.is_none() {
+                    pause_start = Some(Instant::now());
+                }
+            } else {
+                if let Some(ps) = pause_start.take() {
+                    total_paused_ns += ps.elapsed().as_nanos() as i64 / 100;
+                }
+            }
 
             loop {
                 let packet_size = match capture_client.GetNextPacketSize() {
@@ -346,7 +363,7 @@ fn run_loopback(
 
                 let silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) != 0
                     || buffer.is_null()
-                    || paused.load(Ordering::Relaxed);
+                    || was_paused;
 
                 let pcm_chunk = if silent {
                     convert_to_16bit_pcm(
@@ -377,7 +394,7 @@ fn run_loopback(
 
                 // Keep the audio timeline continuous: if wall clock advanced past
                 // next_hns (e.g. long gap between packets), pad silence first.
-                let wall = wall_hns(start);
+                let wall = adjusted_wall(start, total_paused_ns);
                 if !fill_silence_to(&encoder, &mut next_hns, wall, sample_rate, channels) {
                     running.store(false, Ordering::Relaxed);
                     break;
@@ -392,9 +409,9 @@ fn run_loopback(
             }
 
             // Idle or pause with no WASAPI packets: still advance the audio track
-            // with silence so leading quiet periods and pauses land on the timeline.
-            if !got_packet || paused.load(Ordering::Relaxed) {
-                let wall = wall_hns(start);
+            // with silence so leading quiet periods land on the timeline.
+            if !got_packet || was_paused {
+                let wall = adjusted_wall(start, total_paused_ns);
                 if !fill_silence_to(&encoder, &mut next_hns, wall, sample_rate, channels) {
                     running.store(false, Ordering::Relaxed);
                     break;
@@ -404,8 +421,11 @@ fn run_loopback(
             thread::sleep(Duration::from_millis(SILENCE_CHUNK_MS));
         }
 
-        // Final pad so audio duration matches wall-clock stop time.
-        let wall = wall_hns(start);
+        // Final pad so audio duration matches adjusted stop time.
+        if let Some(ps) = pause_start {
+            total_paused_ns += ps.elapsed().as_nanos() as i64 / 100;
+        }
+        let wall = adjusted_wall(start, total_paused_ns);
         let _ = fill_silence_to(&encoder, &mut next_hns, wall, sample_rate, channels);
 
         let _ = client.Stop();

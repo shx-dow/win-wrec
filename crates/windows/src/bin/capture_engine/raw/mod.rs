@@ -125,16 +125,26 @@ pub fn start_recording(args: RecordArgs) -> Result<()> {
     let mut next_frame_time = recording_start;
     let metric_start = recording_start;
     let mut frame_count: u64 = 0;
+    let mut pause_start: Option<Instant> = None;
+    let mut total_paused: Duration = Duration::ZERO;
 
     loop {
         match commands.try_recv() {
             Ok(CaptureCommand::Pause) => {
-                paused.store(true, Ordering::Relaxed);
-                eprintln!("capture-engine: recording paused");
+                if !paused.load(Ordering::Relaxed) {
+                    paused.store(true, Ordering::Relaxed);
+                    pause_start = Some(Instant::now());
+                    eprintln!("capture-engine: recording paused");
+                }
             }
             Ok(CaptureCommand::Resume) => {
-                paused.store(false, Ordering::Relaxed);
-                eprintln!("capture-engine: recording resumed");
+                if paused.load(Ordering::Relaxed) {
+                    if let Some(start) = pause_start.take() {
+                        total_paused += start.elapsed();
+                    }
+                    paused.store(false, Ordering::Relaxed);
+                    eprintln!("capture-engine: recording resumed");
+                }
             }
             Ok(CaptureCommand::Stop) | Err(mpsc::TryRecvError::Disconnected) => {
                 break;
@@ -163,7 +173,7 @@ pub fn start_recording(args: RecordArgs) -> Result<()> {
                     frame_data.cursor = None;
                 }
                 if let Ok(mut enc) = encoder.lock() {
-                    if let Err(e) = enc.write_video(&frame_data) {
+                    if let Err(e) = enc.write_video(&frame_data, total_paused) {
                         eprintln!("capture-engine: video write failed: {e}");
                     }
                 }

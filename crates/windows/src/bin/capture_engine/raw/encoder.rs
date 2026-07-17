@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use domain::{Codec, Quality};
 use std::path::Path;
 use std::ptr;
+use std::time::Duration;
 use windows::core::GUID;
 use windows::Win32::Media::MediaFoundation::*;
 
@@ -131,7 +132,7 @@ impl MfEncoder {
         self.recording_start = start;
     }
 
-    pub fn write_video(&mut self, frame: &super::dxgi::FrameData) -> Result<()> {
+    pub fn write_video(&mut self, frame: &super::dxgi::FrameData, paused_duration: Duration) -> Result<()> {
         let sink_writer = self
             .sink_writer
             .as_ref()
@@ -139,7 +140,7 @@ impl MfEncoder {
 
         let sample_duration = 10_000_000 / self.fps as i64;
         let now = std::time::Instant::now();
-        let sample_time = (now - self.recording_start).as_nanos() as i64 / 100;
+        let sample_time = (now - self.recording_start - paused_duration).as_nanos() as i64 / 100;
 
         let row_bytes = (frame.width * 4) as usize;
         let total = row_bytes * frame.height as usize;
